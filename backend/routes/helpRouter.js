@@ -6,7 +6,7 @@ import { allowedRoles } from '../middlewares/allowedRoles.js'
 export const helpRouter = exp.Router()
 
 
-helpRouter.get("/help", async (req, res) => {
+helpRouter.get("/", async (req, res) => {
 
     let articles = await helpArticleModel.find({
         status: "PUBLISHED"
@@ -27,7 +27,7 @@ helpRouter.get("/help", async (req, res) => {
 })
 
 
-helpRouter.post("/help-drafts", verifyToken, allowedRoles("KNOWLEDGE_MANAGER"), async (req, res) => {
+helpRouter.post("/drafts", verifyToken, allowedRoles("KNOWLEDGE_MANAGER"), async (req, res) => {
 
     let newArticle = req.body
 
@@ -45,7 +45,7 @@ helpRouter.post("/help-drafts", verifyToken, allowedRoles("KNOWLEDGE_MANAGER"), 
 
 
 
-helpRouter.post("/help-drafts/:articleId/publish", verifyToken, allowedRoles("KNOWLEDGE_MANAGER"), async (req, res) => {
+helpRouter.post("/drafts/:articleId/publish", verifyToken, allowedRoles("KNOWLEDGE_MANAGER"), async (req, res) => {
 
     let article = await helpArticleModel.findById(req.params.articleId)
 

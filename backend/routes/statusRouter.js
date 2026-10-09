@@ -4,7 +4,7 @@ import {incidentModel} from "../models/incidentModel.js"
 export const statusRouter = exp.Router()
 
 // Get current incident status
-statusRouter.get("/status",async(req,res)=>{
+statusRouter.get("/",async(req,res)=>{
     try{
         const incidents = await incidentModel.find(
             {},
