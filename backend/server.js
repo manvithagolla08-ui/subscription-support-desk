@@ -28,6 +28,7 @@ app.use(exp.json())
 app.use(cookieParser())
 
 // API Route Handlers
+app.use("/api/auth", authRouter)
 app.use("/api/entitlements", entitlementRouter)
 app.use("/api/help", helpRouter)
 app.use("/api/plans", planRouter)
