@@ -19,7 +19,7 @@ This report documents the verification, testing, and audit of the authentication
   - `KNOWLEDGE_MANAGER`
   - `SUPERVISOR`
 
-All existing middlewares function correctly as designed without requiring structural rewrites. Automated test coverage has been added in `backend/tests/roleMiddleware.test.js` (8/8 tests passing).
+All existing middlewares function correctly as designed without requiring structural rewrites. Automated test coverage has been added in `backend/tests/roleMiddleware.test.js` (9/9 tests passing).
 
 ---
 
@@ -99,6 +99,7 @@ The table below records access permissions for each role across all system endpo
      ✔ allowedRoles: allows matching role among multiple allowed roles
      ✔ allowedRoles: returns 403 when role is unauthorized
      ✔ Role access matrix for all 4 roles across all protected route role rules
+     ✔ HTTP integration: middleware pipeline blocks unauthenticated, blocks unauthorized roles, and allows authorized roles
      ```
 
 ---

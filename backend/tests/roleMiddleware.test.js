@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import jwt from 'jsonwebtoken'
+import express from 'express'
+import cookieParser from 'cookie-parser'
 import { verifyToken } from '../middlewares/verifyToken.js'
 import { allowedRoles } from '../middlewares/allowedRoles.js'
 
@@ -170,3 +172,66 @@ test('Role access matrix for all 4 roles across all protected route role rules',
         }
     }
 })
+
+test('HTTP integration: middleware pipeline blocks unauthenticated, blocks unauthorized roles, and allows authorized roles', async (t) => {
+    const app = express()
+    app.use(cookieParser())
+
+    // Route allowing only SPECIALIST and SUPERVISOR (simulating PATCH /api/tickets/:id)
+    app.patch('/api/tickets/:id', verifyToken, allowedRoles('SPECIALIST', 'SUPERVISOR'), (req, res) => {
+        res.status(200).json({ success: true, message: 'ticket updated' })
+    })
+
+    const server = await new Promise((resolve) => {
+        const s = app.listen(0, () => resolve(s))
+    })
+    const port = server.address().port
+    const url = `http://127.0.0.1:${port}/api/tickets/123`
+
+    t.after(() => {
+        server.close()
+    })
+
+    // 1. Missing cookie -> 401
+    const resNoAuth = await fetch(url, { method: 'PATCH' })
+    assert.equal(resNoAuth.status, 401)
+    const dataNoAuth = await resNoAuth.json()
+    assert.equal(dataNoAuth.message, 'you must login first')
+
+    // 2. CUSTOMER (unauthorized) -> 403
+    const custToken = jwt.sign({ id: 'c1', role: 'CUSTOMER' }, TEST_SECRET)
+    const resCust = await fetch(url, {
+        method: 'PATCH',
+        headers: { Cookie: `accessToken=${custToken}` }
+    })
+    assert.equal(resCust.status, 403)
+    const dataCust = await resCust.json()
+    assert.equal(dataCust.message, 'you are not authorized to access')
+
+    // 3. KNOWLEDGE_MANAGER (unauthorized) -> 403
+    const kmToken = jwt.sign({ id: 'km1', role: 'KNOWLEDGE_MANAGER' }, TEST_SECRET)
+    const resKm = await fetch(url, {
+        method: 'PATCH',
+        headers: { Cookie: `accessToken=${kmToken}` }
+    })
+    assert.equal(resKm.status, 403)
+
+    // 4. SPECIALIST (authorized) -> 200
+    const specToken = jwt.sign({ id: 's1', role: 'SPECIALIST' }, TEST_SECRET)
+    const resSpec = await fetch(url, {
+        method: 'PATCH',
+        headers: { Cookie: `accessToken=${specToken}` }
+    })
+    assert.equal(resSpec.status, 200)
+    const dataSpec = await resSpec.json()
+    assert.equal(dataSpec.message, 'ticket updated')
+
+    // 5. SUPERVISOR (authorized) -> 200
+    const supToken = jwt.sign({ id: 'sup1', role: 'SUPERVISOR' }, TEST_SECRET)
+    const resSup = await fetch(url, {
+        method: 'PATCH',
+        headers: { Cookie: `accessToken=${supToken}` }
+    })
+    assert.equal(resSup.status, 200)
+})
+
