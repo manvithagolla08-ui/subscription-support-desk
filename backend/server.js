@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser'
 
 // Import API route modules
 import { authRouter } from './routes/authRouter.js'
+import { conversationRouter } from './routes/conversationRouter.js'
 import { entitlementRouter } from './routes/entitlementRouter.js'
 import { helpRouter } from './routes/helpRouter.js'
 import { planRouter } from './routes/planRouter.js'
@@ -34,6 +35,7 @@ app.use("/api/help", helpRouter)
 app.use("/api/plans", planRouter)
 app.use("/api/status", statusRouter)
 app.use("/api/tickets", ticketRouter)
+app.use("/api/conversations", conversationRouter)
 
 // Port
 const port = process.env.PORT
