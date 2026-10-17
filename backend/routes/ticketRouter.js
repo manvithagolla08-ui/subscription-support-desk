@@ -5,6 +5,7 @@ import { ticketModel } from '../models/ticketModel.js'
 import { membershipModel } from '../models/membershipModel.js'
 import { verifyToken } from '../middlewares/verifyToken.js'
 import { allowedRoles } from '../middlewares/allowedRoles.js'
+import { getConversationHistory } from '../services/conversation.service.js'
 
 export const ticketRouter = exp.Router()
 
@@ -244,6 +245,85 @@ ticketRouter.patch("/:ticketId", verifyToken, allowedRoles("SPECIALIST", "SUPERV
         res.status(500).json({
             success: false,
             message: "failed to update ticket"
+        })
+    }
+})
+ticketRouter.post("/escalate", verifyToken, allowedRoles("CUSTOMER"), async (req, res) => {
+    try {
+        const { conversationId, title, priority } = req.body
+
+        if (
+            typeof conversationId !== "string" ||
+            !Types.ObjectId.isValid(conversationId) ||
+            typeof title !== "string" ||
+            !title.trim()
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid conversationId and title are required"
+            })
+        }
+
+        if (priority !== undefined && !validPriorities.includes(priority)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid priority"
+            })
+        }
+
+        // This also verifies that the conversation belongs to this customer.
+        const history = await getConversationHistory(
+            conversationId,
+            req.user.id
+        )
+
+        if (!history.length) {
+            return res.status(400).json({
+                success: false,
+                message: "Conversation has no history to escalate"
+            })
+        }
+
+        // Use the conversation history to build the ticket description.
+        const historyText = history
+            .map(message => `${message.role}: ${message.content}`)
+            .join("\n")
+
+        const description = `Escalated from conversation ${conversationId}\n\nConversation history:\n${historyText}`
+
+        // Obtain the customer's organization from their membership.
+        const membership = await membershipModel.findOne({
+            userId: req.user.id,
+            role: "CUSTOMER"
+        })
+
+        if (!membership) {
+            return res.status(403).json({
+                success: false,
+                message: "No customer organization membership found"
+            })
+        }
+
+        const ticket = await ticketModel.create({
+            organizationId: membership.organizationId,
+            createdBy: req.user.id,
+            title: title.trim(),
+            description,
+            priority: priority || "MEDIUM",
+            status: "ESCALATED"
+        })
+
+        return res.status(201).json({
+            success: true,
+            message: "Conversation escalated to human support",
+            data: ticket
+        })
+    } catch (err) {
+        console.error(err)
+
+        return res.status(err.statusCode || 500).json({
+            success: false,
+            message: err.statusCode ? err.message : "Failed to escalate conversation"
         })
     }
 })
