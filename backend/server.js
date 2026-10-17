@@ -10,6 +10,7 @@ import cookieParser from 'cookie-parser'
 import { authRouter } from './routes/authRouter.js'
 import { entitlementRouter } from './routes/entitlementRouter.js'
 import { helpRouter } from './routes/helpRouter.js'
+import { organizationRouter } from './routes/organizationRouter.js'
 import { planRouter } from './routes/planRouter.js'
 import { statusRouter } from './routes/statusRouter.js'
 import { ticketRouter } from './routes/ticketRouter.js'
@@ -31,6 +32,7 @@ app.use(cookieParser())
 app.use("/api/auth", authRouter)
 app.use("/api/entitlements", entitlementRouter)
 app.use("/api/help", helpRouter)
+app.use("/api/organizations", organizationRouter)
 app.use("/api/plans", planRouter)
 app.use("/api/status", statusRouter)
 app.use("/api/tickets", ticketRouter)
