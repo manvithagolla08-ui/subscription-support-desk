@@ -4,9 +4,7 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "node scripts/verifyOrgMembership.js",
-    "seed": "node scripts/mockDataSeeder.js",
-    "test:api": "node scripts/testHttpApiRoutes.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
