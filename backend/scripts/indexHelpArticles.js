@@ -5,7 +5,7 @@ import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { helpArticleModel } from "../models/helpArticleModel.js";
 import { helpChunkModel } from "../models/helpChunkModel.js";
 import { generateEmbedding } from "../services/embeddingService.js";
-
+import dns from "node:dns";
 const textSplitter = new RecursiveCharacterTextSplitter({
   chunkSize: 800,
   chunkOverlap: 120,
@@ -16,7 +16,9 @@ async function indexHelpArticles() {
     if (!process.env.DB_URL) {
       throw new Error("DB_URL is missing from backend/.env");
     }
+    
 
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
     await mongoose.connect(process.env.DB_URL);
     console.log("Connected to MongoDB.");
 

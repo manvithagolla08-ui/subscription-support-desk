@@ -5,6 +5,10 @@ import { conversationModel } from '../models/conversationModel.js'
 import { verifyToken } from '../middlewares/verifyToken.js'
 import { allowedRoles } from '../middlewares/allowedRoles.js'
 
+import { searchRelevantChunks } from '../services/vectorSearchService.js'
+import { generateAIAnswer } from '../services/aiService.js'
+
+
 export const conversationRouter = exp.Router()
 
 // CREATE CONVERSATION
@@ -125,6 +129,7 @@ async function getConversationById(req, res) {
 }
 
 // ADD A USER MESSAGE TO AN EXISTING CONVERSATION
+
 async function addMessage(req, res) {
     try {
         const conversationId = req.params.conversationId
@@ -137,7 +142,6 @@ async function addMessage(req, res) {
             })
         }
 
-        // Require exactly one field: content
         if (
             !req.body ||
             Object.keys(req.body).length !== 1 ||
@@ -163,25 +167,55 @@ async function addMessage(req, res) {
             })
         }
 
+        const userMessage = content.trim()
+
+        // Save the customer's message
         conversation.messages.push({
             role: "user",
-            content: content.trim(),
-            timestamp: new Date()
+            content: userMessage
+        })
+
+        await conversation.save()
+
+        // Retrieve relevant published help article chunks
+        const relevantChunks = await searchRelevantChunks(userMessage)
+
+        // Build context for the AI
+        const context = relevantChunks.length > 0
+            ? relevantChunks.map((chunk, index) =>
+                `Source ${index + 1}: ${chunk.source.title}
+Version: ${chunk.source.version}
+Content: ${chunk.chunkText}`
+            ).join("\n\n")
+            : "No relevant published help articles were found. Do not invent product information. Explain that you cannot confirm the answer from the available information."
+
+        // Generate the AI response
+        const answer = await generateAIAnswer(
+    userMessage,
+    context,
+    req.user.id
+)
+
+        // Save the AI response in the same conversation
+        conversation.messages.push({
+            role: "assistant",
+            content: answer
         })
 
         await conversation.save()
 
         return res.status(200).json({
             success: true,
-            message: "message added successfully",
+            message: "AI response generated successfully",
             data: conversation
         })
+
     } catch (err) {
-        console.error(err)
+        console.error("AI conversation error:", err)
 
         return res.status(500).json({
             success: false,
-            message: "failed to add message"
+            message: "Failed to generate the support response. Your message may already be saved."
         })
     }
 }
