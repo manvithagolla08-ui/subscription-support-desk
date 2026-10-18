@@ -1,209 +1,257 @@
 
-import exp from 'express'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { fileURLToPath } from 'node:url'
-import { helpArticleModel } from '../models/helpArticleModel.js'
-import { verifyToken } from '../middlewares/verifyToken.js'
-import { allowedRoles } from '../middlewares/allowedRoles.js'
-import { searchRelevantChunks } from '../services/vectorSearchService.js'
+import exp from "express";
 
-export const helpRouter = exp.Router()
+import { helpArticleModel } from "../models/helpArticleModel.js";
+import { helpChunkModel } from "../models/helpChunkModel.js";
+import { verifyToken } from "../middlewares/verifyToken.js";
+import { allowedRoles } from "../middlewares/allowedRoles.js";
+import { indexHelpArticle } from "../services/helpIndexingService.js";
+import { searchRelevantChunks } from "../services/vectorSearchService.js";
 
-const execFileAsync = promisify(execFile)
-const backendDirectory = fileURLToPath(new URL('..', import.meta.url))
-const indexingScript = fileURLToPath(
-    new URL('../scripts/indexHelpArticles.js', import.meta.url)
-)
+export const helpRouter = exp.Router();
 
-let indexingInProgress = false
-
-// GET ALL PUBLISHED HELP ARTICLES
+// Get all published help articles.
 helpRouter.get("/", async (req, res) => {
     try {
         const articles = await helpArticleModel.find({
-            status: "PUBLISHED"
-        })
+            status: "PUBLISHED",
+        });
 
         if (articles.length === 0) {
             return res.status(404).json({
                 success: false,
-                message: "no published help articles found"
-            })
+                message: "No published help articles found.",
+            });
         }
 
         return res.status(200).json({
             success: true,
-            message: "published help articles",
-            data: articles
-        })
-    } catch (err) {
-        console.error("Fetch help articles failed:", err)
+            message: "Published help articles.",
+            data: articles,
+        });
+    } catch (error) {
+        console.error("Fetching help articles failed:", error);
+
         return res.status(500).json({
             success: false,
-            message: "failed to fetch help articles"
-        })
+            message: "Failed to fetch help articles.",
+        });
     }
-})
+});
 
-// SEMANTIC SEARCH OVER PUBLISHED HELP ARTICLES
+// Create an article, generate embeddings, and store its chunks.
+// POST /api/help
+helpRouter.post(
+    "/",
+    verifyToken,
+    allowedRoles("KNOWLEDGE_MANAGER"),
+    async (req, res) => {
+        let article;
+
+        try {
+            const { title, content } = req.body;
+
+            if (
+                typeof title !== "string" ||
+                !title.trim() ||
+                typeof content !== "string" ||
+                !content.trim()
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Title and content are required.",
+                });
+            }
+
+            // Create an immediately published article.
+            article = await helpArticleModel.create({
+                title: title.trim(),
+                content: content.trim(),
+                status: "PUBLISHED",
+            });
+
+            // Split the content, generate embeddings, and save chunks.
+            const chunkCount = await indexHelpArticle(article);
+
+            return res.status(201).json({
+                success: true,
+                message: "Article created and indexed successfully.",
+                data: {
+                    articleId: article._id,
+                    chunkCount,
+                },
+            });
+        } catch (error) {
+            console.error("Article ingestion failed:", error);
+
+            // Best-effort cleanup if indexing fails.
+            if (article) {
+                try {
+                    await helpChunkModel.deleteMany({
+                        articleId: article._id,
+                    });
+
+                    await helpArticleModel.deleteOne({
+                        _id: article._id,
+                    });
+                } catch (cleanupError) {
+                    console.error(
+                        "Article ingestion cleanup failed:",
+                        cleanupError
+                    );
+                }
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to create and index the article.",
+            });
+        }
+    }
+);
+
+// Search published help articles.
+// POST /api/help/search
 helpRouter.post("/search", async (req, res) => {
     try {
-        const { query, limit } = req.body ?? {}
+        const { query, limit } = req.body;
 
-        if (
-            typeof query !== "string" ||
-            !query.trim() ||
-            (limit !== undefined &&
-                (!Number.isInteger(limit) || limit < 1 || limit > 20))
-        ) {
+        if (typeof query !== "string" || !query.trim()) {
             return res.status(400).json({
                 success: false,
-                message: "Provide a non-empty query and an optional integer limit between 1 and 20"
-            })
+                message: "A non-empty search query is required.",
+            });
         }
 
         const results = await searchRelevantChunks(
             query.trim(),
             limit ?? 5
-        )
+        );
 
         return res.status(200).json({
             success: true,
-            message: results.length
-                ? "relevant help articles found"
-                : "no relevant help articles found",
-            data: results
-        })
-    } catch (err) {
-        console.error("Help article search failed:", err)
+            message: "Help search completed.",
+            data: results,
+        });
+    } catch (error) {
+        console.error("Help search failed:", error);
+
         return res.status(500).json({
             success: false,
-            message: "failed to search help articles"
-        })
+            message: "Failed to search help articles.",
+        });
     }
-})
+});
 
-// REINDEX PUBLISHED HELP ARTICLES
-helpRouter.post(
-    "/reindex",
-    verifyToken,
-    allowedRoles("KNOWLEDGE_MANAGER"),
-    async (req, res) => {
-        if (indexingInProgress) {
-            return res.status(409).json({
-                success: false,
-                message: "help article indexing is already in progress"
-            })
-        }
-
-        indexingInProgress = true
-
-        try {
-            const { stdout } = await execFileAsync(
-                process.execPath,
-                [indexingScript],
-                {
-                    cwd: backendDirectory,
-                    timeout: 10 * 60 * 1000,
-                    maxBuffer: 2 * 1024 * 1024
-                }
-            )
-
-            return res.status(200).json({
-                success: true,
-                message: "help article indexing completed",
-                output: stdout.trim()
-            })
-        } catch (err) {
-            console.error("Help article reindexing failed:", err)
-
-            return res.status(
-                err.killed ? 504 : 500
-            ).json({
-                success: false,
-                message: err.killed
-                    ? "help article indexing timed out"
-                    : "help article indexing failed",
-                error: err.stderr?.trim() || err.message
-            })
-        } finally {
-            indexingInProgress = false
-        }
-    }
-)
-
-// CREATE HELP ARTICLE DRAFT
+// Create a draft article.
+// POST /api/help/drafts
 helpRouter.post(
     "/drafts",
     verifyToken,
     allowedRoles("KNOWLEDGE_MANAGER"),
     async (req, res) => {
         try {
-            const newArticle = {
-                ...req.body,
-                status: "DRAFT"
+            const { title, content } = req.body;
+
+            if (
+                typeof title !== "string" ||
+                !title.trim() ||
+                typeof content !== "string" ||
+                !content.trim()
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Title and content are required.",
+                });
             }
 
-            const articleDocument = await helpArticleModel.create(newArticle)
+            const article = await helpArticleModel.create({
+                title: title.trim(),
+                content: content.trim(),
+                status: "DRAFT",
+            });
 
             return res.status(201).json({
                 success: true,
-                message: "help article draft created successfully",
-                data: articleDocument
-            })
-        } catch (err) {
-            console.error("Create help draft failed:", err)
-            return res.status(400).json({
+                message: "Help article draft created successfully.",
+                data: article,
+            });
+        } catch (error) {
+            console.error("Creating help article draft failed:", error);
+
+            return res.status(500).json({
                 success: false,
-                message: "failed to create help article draft"
-            })
+                message: "Failed to create help article draft.",
+            });
         }
     }
-)
+);
 
-// PUBLISH A HELP ARTICLE DRAFT
+// Publish an existing draft.
+// POST /api/help/drafts/:articleId/publish
 helpRouter.post(
     "/drafts/:articleId/publish",
     verifyToken,
     allowedRoles("KNOWLEDGE_MANAGER"),
     async (req, res) => {
+        let article;
+
         try {
-            const article = await helpArticleModel.findById(
+            article = await helpArticleModel.findById(
                 req.params.articleId
-            )
+            );
 
             if (!article) {
                 return res.status(404).json({
                     success: false,
-                    message: "help article not found"
-                })
+                    message: "Help article not found.",
+                });
             }
 
             if (article.status === "PUBLISHED") {
                 return res.status(400).json({
                     success: false,
-                    message: "help article is already published"
-                })
+                    message: "Help article is already published.",
+                });
             }
 
-            const updatedArticle = await helpArticleModel.findByIdAndUpdate(
-                req.params.articleId,
-                { status: "PUBLISHED" },
-                { new: true, runValidators: true }
-            )
+            // Publish and persist the article.
+            article.status = "PUBLISHED";
+            await article.save();
 
-            return res.status(200).json({
-                success: true,
-                message: "help article published successfully",
-                data: updatedArticle
-            })
-        } catch (err) {
-            console.error("Publish help article failed:", err)
+            // Automatically index the newly published article.
+            try {
+                const chunkCount = await indexHelpArticle(article);
+
+                return res.status(200).json({
+                    success: true,
+                    message: "Help article published and indexed successfully.",
+                    data: {
+                        article,
+                        chunkCount,
+                    },
+                });
+            } catch (indexError) {
+                console.error(
+                    "Article published, but indexing failed:",
+                    indexError
+                );
+
+                return res.status(500).json({
+                    success: false,
+                    articlePublished: true,
+                    message:
+                        "Article was published, but indexing failed. Retry indexing before relying on search for this article.",
+                    articleId: String(article._id),
+                });
+            }
+        } catch (error) {
+            console.error("Publishing help article failed:", error);
+
             return res.status(500).json({
                 success: false,
-                message: "failed to publish help article"
-            })
+                message: "Failed to publish help article.",
+            });
         }
     }
-)
+);
