@@ -4,14 +4,16 @@ const organizationSchema = new Schema({
 
     name: {
         type: String,
-        required: true,
+        required: [true, "Organization name is required"],
+        unique: true,
         trim: true
     },
 
     planId: {
         type: Types.ObjectId,
         ref: "plan",
-        required: true
+        required: [true, "Plan ID is required"],
+        index: true
     }
 
 }, {

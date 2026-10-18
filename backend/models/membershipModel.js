@@ -5,13 +5,15 @@ const membershipSchema = new Schema({
     userId: {
         type: Types.ObjectId,
         ref: "user",
-        required: true
+        required: [true, "User ID is required"],
+        index: true
     },
 
     organizationId: {
         type: Types.ObjectId,
         ref: "organization",
-        required: true
+        required: [true, "Organization ID is required"],
+        index: true
     },
 
     role: {
@@ -25,7 +27,7 @@ const membershipSchema = new Schema({
             ],
             message: "Invalid role"
         },
-        required: true
+        required: [true, "Role is required"]
     }
 
 }, {
@@ -33,5 +35,8 @@ const membershipSchema = new Schema({
     timestamps: true,
     strict: "throw"
 })
+
+// Enforce unique membership per user per organization
+membershipSchema.index({ userId: 1, organizationId: 1 }, { unique: true })
 
 export const membershipModel = model("membership", membershipSchema)
