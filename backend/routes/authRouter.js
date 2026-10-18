@@ -1,171 +1,206 @@
 
-import exp from 'express'
-import { userModel } from '../models/userModel.js'
-import { hash, compare } from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import exp from "express";
+import { userModel } from "../models/userModel.js";
+import { hash, compare } from "bcryptjs";
+import jwt from "jsonwebtoken";
 
-export const authRouter = exp.Router()
+export const authRouter = exp.Router();
 
-
-// CUSTOMER SIGNUP
+// SIGNUP
 authRouter.post("/signup", async (req, res) => {
-    try {
-        // get customer data
-        let newUser = req.body
+  try {
+    const { name, email, password } = req.body;
 
-        // check required fields
-        if (!newUser.name || !newUser.email || !newUser.password) {
-            return res.status(400).json({
-                success: false,
-                message: "name, email and password are required"
-            })
-        }
-
-        // check password length
-        if (newUser.password.length < 8) {
-            return res.status(400).json({
-                success: false,
-                message: "password must be at least 8 characters"
-            })
-        }
-
-        // normalize email
-        newUser.email = newUser.email.trim().toLowerCase()
-
-        // check whether email already exists
-        let existingUser = await userModel.findOne({
-            email: newUser.email
-        })
-
-        if (existingUser != null) {
-            return res.status(409).json({
-                success: false,
-                message: "email already registered"
-            })
-        }
-
-        // make role CUSTOMER so users cannot register as staff
-        newUser.role = "CUSTOMER"
-
-        // hash password
-        newUser.password = await hash(newUser.password, 12)
-
-        // save in DB
-        let userDocument = await userModel.create(newUser)
-
-        // send response without password
-        res.status(201).json({
-            success: true,
-            message: "customer registered successfully",
-            data: {
-                id: userDocument._id,
-                name: userDocument.name,
-                email: userDocument.email,
-                role: userDocument.role
-            }
-        })
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "name, email and password are required",
+      });
     }
-    catch (err) {
-        if (err.code === 11000) {
-            return res.status(409).json({
-                success: false,
-                message: "email already registered"
-            })
-        }
 
-        res.status(500).json({
+    if (typeof password !== "string" || password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "password must be at least 8 characters",
+      });
+    }
+
+    if (typeof name !== "string" || typeof email !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "name and email must be strings",
+      });
+    }
+
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedName || !normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "name and email cannot be empty",
+      });
+    }
+
+    const existingUser = await userModel.findOne({
+      email: normalizedEmail,
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "email already registered",
+      });
+    }
+
+    // Default role: CUSTOMER.
+    let role = "CUSTOMER";
+
+    // Allow role selection only in isolated local development.
+    if (process.env.NODE_ENV === "development") {
+      const allowedDevelopmentRoles = [
+        "CUSTOMER",
+        "SPECIALIST",
+        "KNOWLEDGE_MANAGER",
+        "SUPERVISOR",
+      ];
+
+      if (req.body.role !== undefined) {
+        if (!allowedDevelopmentRoles.includes(req.body.role)) {
+          return res.status(400).json({
             success: false,
-            message: err.message
-        })
+            message: "invalid development role",
+          });
+        }
+
+        role = req.body.role;
+      }
     }
-})
 
+    const hashedPassword = await hash(password, 12);
 
-// CUSTOMER / STAFF LOGIN
+    const userDocument = await userModel.create({
+      name: normalizedName,
+      email: normalizedEmail,
+      password: hashedPassword,
+      role,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "user registered successfully",
+      data: {
+        id: userDocument._id,
+        name: userDocument.name,
+        email: userDocument.email,
+        role: userDocument.role,
+      },
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "email already registered",
+      });
+    }
+
+    console.error("Signup failed:", err.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "failed to register user",
+    });
+  }
+});
+
+// LOGIN
 authRouter.post("/login", async (req, res) => {
-    try {
-        // get credentials
-        let credObj = req.body
+  try {
+    const { email, password } = req.body;
 
-        if (!credObj.email || !credObj.password) {
-            return res.status(400).json({
-                success: false,
-                message: "email and password are required"
-            })
-        }
-
-        // find user by email
-        let user = await userModel.findOne({
-            email: credObj.email.trim().toLowerCase()
-        })
-
-        if (user == null) {
-            return res.status(401).json({
-                success: false,
-                message: "invalid email or password"
-            })
-        }
-
-        // compare password
-        let result = await compare(credObj.password, user.password)
-
-        if (result == false) {
-            return res.status(401).json({
-                success: false,
-                message: "invalid email or password"
-            })
-        }
-
-        // generate signed token
-        let signedToken = jwt.sign(
-            {
-                id: user._id,
-                role: user.role
-            },
-            process.env.SECRET_KEY,
-            { expiresIn: '1d' }
-        )
-
-        // store token in cookie
-        res.cookie("accessToken", signedToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "lax",
-            maxAge: 24 * 60 * 60 * 1000
-        })
-
-        res.status(200).json({
-            success: true,
-            message: "login successful",
-            data: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role
-            }
-        })
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string" ||
+      !email.trim() ||
+      !password
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "email and password are required",
+      });
     }
-    catch (err) {
-        res.status(500).json({
-            success: false,
-            message: err.message
-        })
-    }
-})
 
+    const user = await userModel.findOne({
+      email: email.trim().toLowerCase(),
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "invalid email or password",
+      });
+    }
+
+    const passwordMatches = await compare(password, user.password);
+
+    if (!passwordMatches) {
+      return res.status(401).json({
+        success: false,
+        message: "invalid email or password",
+      });
+    }
+
+    if (!process.env.SECRET_KEY) {
+      throw new Error("SECRET_KEY is not configured");
+    }
+
+    const signedToken = jwt.sign(
+      {
+        id: user._id,
+        role: user.role,
+      },
+      process.env.SECRET_KEY,
+      { expiresIn: "1d" }
+    );
+
+    res.cookie("accessToken", signedToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "login successful",
+      data: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Login failed:", err.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "login failed",
+    });
+  }
+});
 
 // LOGOUT
 authRouter.post("/logout", (req, res) => {
-    // clear access token cookie
-    res.clearCookie("accessToken", {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/"
-    })
+  res.clearCookie("accessToken", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+  });
 
-    res.status(200).json({
-        success: true,
-        message: "logout successful"
-    })
-})
+  return res.status(200).json({
+    success: true,
+    message: "logout successful",
+  });
+});
