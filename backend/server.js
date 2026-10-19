@@ -3,6 +3,7 @@ import exp from 'express'
 import { connect } from 'mongoose'
 import { config } from 'dotenv'
 import cookieParser from 'cookie-parser'
+import cors from 'cors'
 
 
 
@@ -20,6 +21,10 @@ import { ticketRouter } from './routes/ticketRouter.js'
 config()
 
 const app = exp()
+app.use(cors({
+    origin: 'http://localhost:5173',
+    credentials: true
+}))
 import dns from "node:dns";
 
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
