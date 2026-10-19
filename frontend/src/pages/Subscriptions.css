@@ -1,0 +1,137 @@
+.subscriptions-page {
+  width: 100%;
+  min-width: 0;
+}
+
+.subscriptions-section-title {
+  margin: 24px 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.subscription-card {
+  margin-bottom: 14px;
+}
+
+.subscription-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.subscription-card-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.subscription-card-header p {
+  margin: 4px 0 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.plan-badge {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.feature-list,
+.incident-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.feature-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid #f0f1f5;
+  font-size: 14px;
+}
+
+.feature-on .feature-state {
+  color: #047857;
+  font-weight: 600;
+}
+
+.feature-off {
+  color: #9ca3af;
+}
+
+.feature-off .feature-state {
+  font-weight: 600;
+}
+
+.status-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.status-banner-ok {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.status-banner-bad {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.incident-list li {
+  padding: 12px 0;
+  border-top: 1px solid #f0f1f5;
+  font-size: 14px;
+}
+
+.incident-list li p {
+  margin: 4px 0 0;
+}
+
+.incident-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.incident-feature {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.incident-status {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.incident-resolved {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.subscriptions-muted {
+  margin: 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.subscriptions-error {
+  margin: 0;
+  color: #b91c1c;
+}
