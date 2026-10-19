@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import PageHeader from "../components/common/PageHeader";
 import Card from "../components/common/Card";
@@ -7,43 +6,199 @@ import api from "../services/api";
 import "./Support.css";
 
 function getErrorMessage(error) {
-  return error?.message || "Something went wrong. Please try again.";
+  return (
+    error?.response?.data?.message ||
+    error?.message ||
+    "Something went wrong. Please try again."
+  );
+}
+
+function getArticles(response) {
+  const data = response?.data;
+
+  // Supports an array response and common wrapped API responses.
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.articles)) return data.articles;
+
+  return [];
 }
 
 function Support() {
+  // AI chat and ticket state
   const [tickets, setTickets] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
 
+  // Organization and escalation state
+  const [organizations, setOrganizations] = useState([]);
+  const [organizationId, setOrganizationId] = useState("");
   const [conversationId, setConversationId] = useState("");
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState("MEDIUM");
 
+  // Help Center state
+  const [articles, setArticles] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [articlesLoading, setArticlesLoading] = useState(false);
+  const [articlesError, setArticlesError] = useState("");
+
+  // General UI state
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [creating, setCreating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Load tickets, conversations, and customer organizations.
   const loadSupportData = useCallback(async () => {
-    const [ticketResponse, conversationResponse] = await Promise.all([
+    const [
+      ticketResponse,
+      conversationResponse,
+      organizationResponse,
+    ] = await Promise.all([
       api.get("/tickets"),
       api.get("/conversations"),
+      api.get("/organizations/mine"),
     ]);
 
-    setTickets(ticketResponse.data || []);
-    setConversations(conversationResponse.data || []);
+    const ticketData = Array.isArray(ticketResponse.data)
+      ? ticketResponse.data
+      : ticketResponse.data?.tickets || [];
 
-    return conversationResponse.data || [];
+    const conversationData = Array.isArray(conversationResponse.data)
+      ? conversationResponse.data
+      : conversationResponse.data?.conversations || [];
+
+    setTickets(ticketData);
+    setConversations(conversationData);
+
+    const organizationData = Array.isArray(organizationResponse.data)
+      ? organizationResponse.data
+      : organizationResponse.data?.memberships || [];
+
+    const customerOrganizations = organizationData.filter(
+      (membership) =>
+        membership.role === "CUSTOMER" &&
+        membership.organizationId?._id
+    );
+
+    setOrganizations(customerOrganizations);
+
+    return conversationData;
   }, []);
 
+  // Load published help articles.
+  const fetchAllArticles = useCallback(async () => {
+    setArticlesLoading(true);
+    setArticlesError("");
+
+    try {
+      const response = await api.get("/help");
+      setArticles(getArticles(response));
+    } catch (err) {
+      console.error("Error fetching published articles:", err);
+      setArticlesError(getErrorMessage(err));
+    } finally {
+      setArticlesLoading(false);
+    }
+  }, []);
+
+  // Search published help articles.
+  async function handleSearch(event) {
+    event.preventDefault();
+
+    const query = searchQuery.trim();
+
+    if (!query) {
+      await fetchAllArticles();
+      return;
+    }
+
+    setArticlesLoading(true);
+    setArticlesError("");
+
+    try {
+      const response = await api.post("/help/search", {
+        query,
+      });
+
+      setArticles(getArticles(response));
+    } catch (err) {
+      console.error("Error searching articles:", err);
+      setArticlesError(getErrorMessage(err));
+      setArticles([]);
+    } finally {
+      setArticlesLoading(false);
+    }
+  }
+
+  // Initialize chat data and Help Center independently.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initialize() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const items = await loadSupportData();
+
+        if (cancelled) return;
+
+        if (items.length > 0) {
+          const latest = items[0];
+
+          setActiveId(latest._id);
+          setMessages(latest.messages || []);
+
+          try {
+            const response = await api.get(
+              `/conversations/${encodeURIComponent(latest._id)}`
+            );
+
+            if (!cancelled) {
+              setMessages(response.data.messages || []);
+            }
+          } catch (err) {
+            if (!cancelled) {
+              setError(getErrorMessage(err));
+            }
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(getErrorMessage(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    initialize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadSupportData]);
+
+  useEffect(() => {
+    fetchAllArticles();
+  }, [fetchAllArticles]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, sending]);
+
+  // Open an existing conversation.
   const openConversation = useCallback(
     async (id) => {
       setActiveId(id);
@@ -61,6 +216,7 @@ function Support() {
         );
 
         const conversation = response.data;
+
         setMessages(conversation.messages || []);
         setActiveId(conversation._id);
       } catch (err) {
@@ -70,53 +226,7 @@ function Support() {
     [conversations]
   );
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialize() {
-      setLoading(true);
-      setError("");
-
-      try {
-        const items = await loadSupportData();
-
-        if (cancelled) return;
-
-        if (items.length > 0) {
-          const latest = items[0];
-          setActiveId(latest._id);
-          setMessages(latest.messages || []);
-
-          try {
-            const response = await api.get(
-              `/conversations/${encodeURIComponent(latest._id)}`
-            );
-
-            if (!cancelled) {
-              setMessages(response.data.messages || []);
-            }
-          } catch (err) {
-            if (!cancelled) setError(getErrorMessage(err));
-          }
-        }
-      } catch (err) {
-        if (!cancelled) setError(getErrorMessage(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    initialize();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loadSupportData]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, sending]);
-
+  // Create a new conversation.
   async function createConversation() {
     if (creating || sending) return;
 
@@ -146,6 +256,7 @@ function Support() {
     }
   }
 
+  // Send a message to the AI assistant.
   async function sendMessage(event) {
     event.preventDefault();
 
@@ -206,9 +317,10 @@ function Support() {
           const refreshed = await api.get(
             `/conversations/${encodeURIComponent(id)}`
           );
+
           setMessages(refreshed.data.messages || []);
         } catch {
-          // Keep the messages already visible if refresh fails.
+          // Keep the messages already visible.
         }
       } else {
         setMessages((previous) =>
@@ -225,13 +337,16 @@ function Support() {
     }
   }
 
+  // Escalate a conversation into a support ticket.
   async function handleEscalate(event) {
     event.preventDefault();
     setError("");
     setMessage("");
 
-    if (!conversationId || !title.trim()) {
-      setError("Select a conversation and enter a ticket title.");
+    if (!conversationId || !organizationId || !title.trim()) {
+      setError(
+        "Select a conversation, organization, and enter a ticket title."
+      );
       return;
     }
 
@@ -240,6 +355,7 @@ function Support() {
     try {
       await api.post("/tickets/escalate", {
         conversationId,
+        organizationId,
         title: title.trim(),
         priority,
       });
@@ -247,16 +363,16 @@ function Support() {
       setMessage("Conversation escalated successfully.");
       setConversationId("");
       setTitle("");
+      setOrganizationId("");
       setPriority("MEDIUM");
 
       const items = await loadSupportData();
 
-      // Keep the currently selected conversation open.
       if (activeId && items.some((item) => item._id === activeId)) {
         await openConversation(activeId);
       }
     } catch (err) {
-      setError(getErrorMessage(err) || "Could not escalate the conversation.");
+      setError(getErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -266,12 +382,13 @@ function Support() {
     <div className="customer-support-page">
       <PageHeader
         title="AI Support"
-        description="Chat with your subscription support assistant, view tickets, or escalate a conversation to human support."
+        description="Chat with your subscription support assistant, view tickets, search help articles, or escalate a conversation to human support."
       />
 
       {error && <p role="alert">{error}</p>}
       {message && <p role="status">{message}</p>}
 
+      {/* FEATURE 1: AI CHAT AND CONVERSATION HISTORY */}
       <Card>
         <div className="customer-chat">
           <aside className="customer-chat-sidebar">
@@ -291,7 +408,9 @@ function Support() {
 
             <div className="customer-chat-history">
               {loading ? (
-                <p className="customer-chat-muted">Loading conversations...</p>
+                <p className="customer-chat-muted">
+                  Loading conversations...
+                </p>
               ) : conversations.length === 0 ? (
                 <p className="customer-chat-muted">
                   No conversations yet. Start a new one!
@@ -455,7 +574,10 @@ function Support() {
             </div>
 
             <form className="customer-chat-composer" onSubmit={sendMessage}>
-              <label htmlFor="customer-chat-input" className="customer-chat-sr">
+              <label
+                htmlFor="customer-chat-input"
+                className="customer-chat-sr"
+              >
                 Your message
               </label>
 
@@ -480,7 +602,9 @@ function Support() {
                 <button
                   type="submit"
                   className="customer-chat-send"
-                  disabled={!input.trim() || sending || loading || creating}
+                  disabled={
+                    !input.trim() || sending || loading || creating
+                  }
                   aria-label="Send message"
                 >
                   {sending ? "…" : "↑"}
@@ -496,11 +620,85 @@ function Support() {
         </div>
       </Card>
 
+      {/* FEATURE 2: HELP CENTER AND ARTICLE SEARCH */}
+      <Card>
+        <div className="help-center">
+          <h2>Help Center</h2>
+          <p>
+            Search published help articles to find answers to your questions.
+          </p>
+
+          <form className="help-search-form" onSubmit={handleSearch}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="e.g., How to publish an article..."
+              aria-label="Search help articles"
+            />
+
+            <Button type="submit" disabled={articlesLoading}>
+              {articlesLoading ? "Searching..." : "Search"}
+            </Button>
+
+            <Button
+              type="button"
+              disabled={articlesLoading}
+              onClick={() => {
+                setSearchQuery("");
+                fetchAllArticles();
+              }}
+            >
+              Show all
+            </Button>
+          </form>
+
+          {articlesError && (
+            <p role="alert" className="help-center-error">
+              {articlesError}
+            </p>
+          )}
+
+          <div className="help-articles-list">
+            {articlesLoading ? (
+              <p className="help-center-empty">Loading articles...</p>
+            ) : articles.length === 0 ? (
+              <p className="help-center-empty">
+                No articles found.
+              </p>
+            ) : (
+              articles.map((article, index) => (
+                <article
+                  key={article._id || article.id || index}
+                  className="help-article"
+                >
+                  <h3>{article.title || "Untitled article"}</h3>
+
+                  <span className="help-article-version">
+                    Version: {article.version ?? "N/A"}
+                  </span>
+
+                  <p>
+                    {article.content ||
+                      article.chunkText ||
+                      article.text ||
+                      "No article content available."}
+                  </p>
+                </article>
+              ))
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* FEATURE 3: ESCALATE A CONVERSATION */}
       <Card>
         <h2>Escalate a Conversation</h2>
-        <p>Select a conversation that needs help from the support team.</p>
+        <p>
+          Select a conversation that needs help from the support team.
+        </p>
 
-        <form onSubmit={handleEscalate}>
+        <form onSubmit={handleEscalate} className="ticket-escalation-form">
           <div>
             <label htmlFor="conversation">Conversation</label>
             <select
@@ -513,6 +711,26 @@ function Support() {
               {conversations.map((conversation) => (
                 <option key={conversation._id} value={conversation._id}>
                   {conversation.title || `Conversation ${conversation._id}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="organization">Organization</label>
+            <select
+              id="organization"
+              value={organizationId}
+              onChange={(event) => setOrganizationId(event.target.value)}
+              required
+            >
+              <option value="">Select an organization</option>
+              {organizations.map((membership) => (
+                <option
+                  key={membership.organizationId._id}
+                  value={membership.organizationId._id}
+                >
+                  {membership.organizationId.name}
                 </option>
               ))}
             </select>
@@ -554,6 +772,7 @@ function Support() {
         )}
       </Card>
 
+      {/* FEATURE 4: VIEW SUPPORT TICKETS */}
       <Card>
         <h2>My Support Tickets</h2>
 

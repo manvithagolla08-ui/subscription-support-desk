@@ -178,3 +178,42 @@ select {
     padding: 0 16px;
   }
 }
+
+.logout-container {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.logout-button {
+  padding: 9px 16px;
+  border: 1px solid #d92d20;
+  border-radius: 8px;
+  background: #fff;
+  color: #b42318;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.logout-button:hover:not(:disabled) {
+  background: #fef3f2;
+}
+
+.logout-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.logout-error {
+  color: #b42318;
+  font-size: 12px;
+}
+.layout-logout {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+}

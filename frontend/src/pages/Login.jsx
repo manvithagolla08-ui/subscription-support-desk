@@ -1,6 +1,11 @@
 
 import { useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import {
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 import "./Login.css";
 
@@ -41,7 +46,9 @@ export default function Login() {
         roleDestinations[authenticatedUser.role];
 
       if (!destination) {
-        setError("Your account has an unsupported role. Please contact support.");
+        setError(
+          "Your account has an unsupported role. Please contact support."
+        );
         return;
       }
 
@@ -70,6 +77,7 @@ export default function Login() {
         </div>
 
         <h1>Welcome back</h1>
+
         <p className="login-subtitle">
           Sign in to manage your subscriptions and support requests.
         </p>
@@ -107,6 +115,11 @@ export default function Login() {
             {submitting ? "Signing in..." : "Sign in"}
           </button>
         </form>
+
+        <p className="login-signup">
+          Don't have an account?{" "}
+          <Link to="/signup">Sign up</Link>
+        </p>
 
         <p className="login-footer">
           Secure access to your support workspace.

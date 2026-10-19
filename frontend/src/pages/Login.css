@@ -112,3 +112,18 @@
     margin: 24px 0 0;
     text-align: center;
 }
+.login-signup {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.login-signup a {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.login-signup a:hover {
+  text-decoration: underline;
+}
