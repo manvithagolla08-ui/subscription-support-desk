@@ -4,6 +4,8 @@ import MainLayout from "../layouts/MainLayout";
 import Dashboard from "../pages/Dashboard";
 import Subscriptions from "../pages/Subscriptions";
 import Support from "../pages/Support";
+import SpecialistDashboard from "../pages/SpecialistDashboard";
+import KnowledgeManager from "../pages/KnowledgeManager";
 import Login from "../pages/Login";
 import Signup from "../pages/Signup";
 import ProtectedRoute from "../auth/ProtectedRoute";
@@ -28,7 +30,7 @@ function AppRoutes() {
             element={<Dashboard />}
           />
 
-          {/* Only customers and supervisors can access subscriptions */}
+          {/* Subscriptions: Customers and Supervisors only */}
           <Route
             element={
               <ProtectedRoute
@@ -46,6 +48,34 @@ function AppRoutes() {
             path="/support"
             element={<Support />}
           />
+
+          {/* Specialist Dashboard: Support Specialists and Supervisors only */}
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={["SPECIALIST", "SUPERVISOR"]}
+              />
+            }
+          >
+            <Route
+              path="/specialist"
+              element={<SpecialistDashboard />}
+            />
+          </Route>
+
+          {/* Knowledge Manager: Knowledge Managers and Supervisors only */}
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={["KNOWLEDGE_MANAGER", "SUPERVISOR"]}
+              />
+            }
+          >
+            <Route
+              path="/knowledge"
+              element={<KnowledgeManager />}
+            />
+          </Route>
         </Route>
       </Route>
 
