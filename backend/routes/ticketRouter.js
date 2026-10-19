@@ -250,14 +250,16 @@ ticketRouter.patch("/:ticketId", verifyToken, allowedRoles("SPECIALIST", "SUPERV
 })
 ticketRouter.post("/escalate", verifyToken, allowedRoles("CUSTOMER"), async (req, res) => {
     try {
-        const { conversationId, title, priority } = req.body
+        const { conversationId, organizationId, title, priority } = req.body
 
-        if (
-            typeof conversationId !== "string" ||
-            !Types.ObjectId.isValid(conversationId) ||
-            typeof title !== "string" ||
-            !title.trim()
-        ) {
+      if (
+    typeof conversationId !== "string" ||
+    !Types.ObjectId.isValid(conversationId) ||
+    typeof organizationId !== "string" ||
+    !Types.ObjectId.isValid(organizationId) ||
+    typeof title !== "string" ||
+    !title.trim()
+)  {
             return res.status(400).json({
                 success: false,
                 message: "Valid conversationId and title are required"
@@ -292,10 +294,11 @@ ticketRouter.post("/escalate", verifyToken, allowedRoles("CUSTOMER"), async (req
         const description = `Escalated from conversation ${conversationId}\n\nConversation history:\n${historyText}`
 
         // Obtain the customer's organization from their membership.
-        const membership = await membershipModel.findOne({
-            userId: req.user.id,
-            role: "CUSTOMER"
-        })
+       const membership = await membershipModel.findOne({
+    userId: req.user.id,
+    organizationId,
+    role: "CUSTOMER"
+})
 
         if (!membership) {
             return res.status(403).json({
