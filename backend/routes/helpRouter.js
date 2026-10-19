@@ -6,7 +6,7 @@ import { helpChunkModel } from "../models/helpChunkModel.js";
 import { verifyToken } from "../middlewares/verifyToken.js";
 import { allowedRoles } from "../middlewares/allowedRoles.js";
 import { indexHelpArticle } from "../services/helpIndexingService.js";
-import { searchRelevantChunks } from "../services/vectorSearchService.js";
+import { getRelevantHelpArticles } from "../services/helpArticleRetrievalService.js";
 
 export const helpRouter = exp.Router();
 
@@ -123,10 +123,7 @@ helpRouter.post("/search", async (req, res) => {
             });
         }
 
-        const results = await searchRelevantChunks(
-            query.trim(),
-            limit ?? 5
-        );
+        const results = await getRelevantHelpArticles(query.trim());
 
         return res.status(200).json({
             success: true,
