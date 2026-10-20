@@ -1,3 +1,4 @@
+
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 
@@ -6,32 +7,32 @@ function Sidebar() {
   const role = user?.role;
 
   const navItems = [
-  {
-    label: "Subscriptions",
-    path: "/subscriptions",
-    show: ["CUSTOMER", "KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
-  },
-  {
-    label: "Supervisor",
-    path: "/supervisor",
-    show: role === "SUPERVISOR"
-},
-  {
-    label: "Support",
-    path: "/support",
-    show: ["CUSTOMER", "SPECIALIST", "KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
-  },
-  {
-    label: "Specialist Tickets",
-    path: "/specialist",
-    show: ["SPECIALIST", "SUPERVISOR"].includes(role),
-  },
-  {
-    label: "Knowledge Base",
-    path: "/knowledge",
-    show: ["KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
-  },
-];
+    {
+      label: "Subscriptions",
+      path: "/subscriptions",
+      show: ["CUSTOMER", "SUPERVISOR"].includes(role),
+    },
+    {
+      label: "Supervisor",
+      path: "/supervisor",
+      show: role === "SUPERVISOR",
+    },
+    {
+      label: "Support",
+      path: "/support",
+      show: ["CUSTOMER", "SUPERVISOR"].includes(role),
+    },
+    {
+      label: "Specialist Tickets",
+      path: "/specialist",
+      show: ["SPECIALIST", "SUPERVISOR"].includes(role),
+    },
+    {
+      label: "Knowledge Base",
+      path: "/knowledge",
+      show: ["KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
+    },
+  ];
 
   return (
     <aside className="sidebar">

@@ -1,4 +1,3 @@
-
 import exp from "express";
 
 import { helpArticleModel } from "../models/helpArticleModel.js";
@@ -10,23 +9,25 @@ import { getRelevantHelpArticles } from "../services/helpArticleRetrievalService
 
 export const helpRouter = exp.Router();
 
-// Get all published help articles.
+// Get help articles (supports ?status=ALL, ?status=DRAFT, or default PUBLISHED).
 helpRouter.get("/", async (req, res) => {
     try {
-        const articles = await helpArticleModel.find({
-            status: "PUBLISHED",
-        });
+        const { status } = req.query;
+        let filter = { status: "PUBLISHED" };
 
-        if (articles.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: "No published help articles found.",
-            });
+        if (status === "ALL") {
+            filter = {};
+        } else if (status === "DRAFT") {
+            filter = { status: "DRAFT" };
+        } else if (status) {
+            filter = { status: status.toUpperCase() };
         }
+
+        const articles = await helpArticleModel.find(filter).sort({ createdAt: -1 });
 
         return res.status(200).json({
             success: true,
-            message: "Published help articles.",
+            message: "Help articles retrieved.",
             data: articles,
         });
     } catch (error) {
@@ -35,6 +36,29 @@ helpRouter.get("/", async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to fetch help articles.",
+        });
+    }
+});
+
+// Get all draft help articles directly from the database.
+// GET /api/help/drafts
+helpRouter.get("/drafts", async (req, res) => {
+    try {
+        const drafts = await helpArticleModel.find({
+            status: "DRAFT",
+        }).sort({ createdAt: -1 });
+
+        return res.status(200).json({
+            success: true,
+            message: "Draft help articles.",
+            data: drafts,
+        });
+    } catch (error) {
+        console.error("Fetching draft articles failed:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch draft articles.",
         });
     }
 });
