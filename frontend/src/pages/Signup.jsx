@@ -6,12 +6,13 @@ import "./Signup.css";
 export default function Signup() {
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-  });
+const [form, setForm] = useState({
+  name: "",
+  email: "",
+  password: "",
+  confirmPassword: "",
+  role: "CUSTOMER",
+});
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -44,10 +45,11 @@ export default function Signup() {
       const result = await apiRequest("/auth/signup", {
         method: "POST",
         body: JSON.stringify({
-          name: form.name.trim(),
-          email: form.email.trim(),
-          password: form.password,
-        }),
+  name: form.name.trim(),
+  email: form.email.trim(),
+  password: form.password,
+  role: form.role,
+}),
       });
 
       if (result.success) {
@@ -92,6 +94,20 @@ export default function Signup() {
           autoComplete="email"
           required
         />
+
+<label htmlFor="role">Account role</label>
+<select
+  id="role"
+  name="role"
+  value={form.role}
+  onChange={handleChange}
+  required
+>
+  <option value="CUSTOMER">Customer</option>
+  <option value="SPECIALIST">Support Specialist</option>
+  <option value="KNOWLEDGE_MANAGER">Knowledge Manager</option>
+  <option value="SUPERVISOR">Supervisor</option>
+</select>
 
         <label htmlFor="password">Password</label>
         <input

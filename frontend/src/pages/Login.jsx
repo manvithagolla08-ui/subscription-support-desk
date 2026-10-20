@@ -9,6 +9,18 @@ import {
 import { useAuth } from "../auth/AuthContext.jsx";
 import "./Login.css";
 
+
+function getRoleDestination(role) {
+  const roleDestinations = {
+    CUSTOMER: "/support",
+    SPECIALIST: "/support",
+    KNOWLEDGE_MANAGER: "/knowledge",
+    SUPERVISOR: "/supervisor",
+  };
+
+  return roleDestinations[role] || null;
+}
+
 export default function Login() {
   const { user, loading, login } = useAuth();
   const navigate = useNavigate();
@@ -24,8 +36,16 @@ export default function Login() {
   }
 
   if (user) {
-    return <Navigate to="/dashboard" replace />;
-  }
+  const destination = getRoleDestination(user.role);
+
+  return destination ? (
+    <Navigate to={destination} replace />
+  ) : (
+    <p className="login-message">
+      Unsupported account role. Please contact support.
+    </p>
+  );
+}
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -35,32 +55,25 @@ export default function Login() {
     try {
       const authenticatedUser = await login(email.trim(), password);
 
-      const roleDestinations = {
-        CUSTOMER: "/dashboard",
-        SPECIALIST: "/support",
-        KNOWLEDGE_MANAGER: "/support",
-        SUPERVISOR: "/dashboard",
-      };
+      
+const destination = getRoleDestination(authenticatedUser.role);
 
-      const destination =
-        roleDestinations[authenticatedUser.role];
+if (!destination) {
+  setError(
+    "Your account has an unsupported role. Please contact support."
+  );
+  return;
+}
 
-      if (!destination) {
-        setError(
-          "Your account has an unsupported role. Please contact support."
-        );
-        return;
-      }
+const requestedPath = location.state?.from?.pathname;
 
-      const requestedPath = location.state?.from?.pathname;
+navigate(
+  requestedPath && requestedPath.startsWith("/")
+    ? requestedPath
+    : destination,
+  { replace: true }
+);
 
-      // Use a safe, known application route instead of arbitrary URLs.
-      navigate(
-        requestedPath && requestedPath.startsWith("/")
-          ? requestedPath
-          : destination,
-        { replace: true }
-      );
     } catch (err) {
       setError(err.message || "Unable to log in. Please try again.");
     } finally {

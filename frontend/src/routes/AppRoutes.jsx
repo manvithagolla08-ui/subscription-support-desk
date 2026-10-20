@@ -9,6 +9,7 @@ import KnowledgeManager from "../pages/KnowledgeManager";
 import Login from "../pages/Login";
 import Signup from "../pages/Signup";
 import ProtectedRoute from "../auth/ProtectedRoute";
+import Supervisor from "../pages/Supervisor";
 
 function AppRoutes() {
   return (
@@ -38,6 +39,10 @@ function AppRoutes() {
               />
             }
           >
+            <Route
+    element={<ProtectedRoute allowedRoles={["SUPERVISOR"]} />}>
+    <Route path="/supervisor" element={<Supervisor />} />
+</Route>
             <Route
               path="/subscriptions"
               element={<Subscriptions />}
