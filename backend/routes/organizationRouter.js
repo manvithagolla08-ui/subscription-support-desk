@@ -106,7 +106,11 @@ organizationRouter.get("/mine", verifyToken, async (req, res) => {
     try {
         let memberships = await membershipModel.find({
             userId: req.user.id
-        }).populate("organizationId", "name planId")
+        }).populate({
+            path: "organizationId",
+            select: "name planId",
+            populate: { path: "planId", select: "name description" }
+        })
 
         res.status(200).json({
             success: true,
