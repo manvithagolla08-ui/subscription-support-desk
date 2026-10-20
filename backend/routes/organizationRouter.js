@@ -165,17 +165,8 @@ organizationRouter.get(
     allowedRoles('SUPERVISOR'),
     async (req, res) => {
         try {
-            const memberships = await membershipModel.find({
-                userId: req.user.id,
-                role: 'SUPERVISOR'
-            }).select('organizationId');
-
-            const organizationIds = memberships.map(
-                membership => membership.organizationId
-            );
-
             const organizations = await organizationModel
-                .find({ _id: { $in: organizationIds } })
+                .find({})
                 .populate('planId', 'name description');
 
             return res.status(200).json({

@@ -1,0 +1,2628 @@
+diff --git a/backend/routes/organizationRouter.js b/backend/routes/organizationRouter.js
+index 272908e..d44fc60 100644
+--- a/backend/routes/organizationRouter.js
++++ b/backend/routes/organizationRouter.js
+@@ -1,390 +1,614 @@
+-
+-import exp from 'express'
+-import { Types } from 'mongoose'
+-import { organizationModel } from '../models/organizationModel.js'
+-import { membershipModel } from '../models/membershipModel.js'
+-import { planModel } from '../models/planModel.js'
+-import { userModel } from '../models/userModel.js'
+-import { verifyToken } from '../middlewares/verifyToken.js'
+-import { allowedRoles } from '../middlewares/allowedRoles.js'
+-
+-export const organizationRouter = exp.Router()
+-
+-const validRoles = ['CUSTOMER', 'SPECIALIST', 'KNOWLEDGE_MANAGER', 'SUPERVISOR']
+-
+-
+-// Check whether a user is a supervisor of the given organization
++import exp from 'express';
++import { Types } from 'mongoose';
++
++import { organizationModel } from '../models/organizationModel.js';
++import { membershipModel } from '../models/membershipModel.js';
++import { planModel } from '../models/planModel.js';
++import { userModel } from '../models/userModel.js';
++import { verifyToken } from '../middlewares/verifyToken.js';
++import { allowedRoles } from '../middlewares/allowedRoles.js';
++
++export const organizationRouter = exp.Router();
++
++const validRoles = [
++    'CUSTOMER',
++    'SPECIALIST',
++    'KNOWLEDGE_MANAGER',
++    'SUPERVISOR'
++];
++
++// Check whether the logged-in user has the Supervisor account role.
+ async function isOrgSupervisor(userId, organizationId) {
+-    let membership = await membershipModel.findOne({
+-        userId: userId,
+-        organizationId: organizationId,
+-        role: "SUPERVISOR"
+-    })
++    const user = await userModel.findById(userId).select('role');
+ 
+-    return membership != null
+-}
+-
+-
+-// CREATE ORGANIZATION (creator becomes its supervisor)
+-organizationRouter.post("/", verifyToken, allowedRoles("SUPERVISOR"), async (req, res) => {
+-    try {
+-        let { name, planId } = req.body
+-
+-        // Reject unexpected fields
+-        let allowedFields = ['name', 'planId']
+-
+-        if (Object.keys(req.body).some(key => !allowedFields.includes(key))) {
+-            return res.status(400).json({
+-                success: false,
+-                message: "Invalid fields in request body"
+-            })
+-        }
+-
+-        if (
+-            typeof name !== "string" ||
+-            !name.trim() ||
+-            !planId ||
+-            !Types.ObjectId.isValid(planId)
+-        ) {
+-            return res.status(400).json({
+-                success: false,
+-                message: "Valid name and planId are required"
+-            })
+-        }
++    if (user?.role !== 'SUPERVISOR') {
++        return false;
++    }
+ 
+-        // Verify the plan exists
+-        let plan = await planModel.findById(planId)
++    // Confirm the Supervisor has a membership in this organization.
++    const membership = await membershipModel.findOne({
++        userId,
++        organizationId,
++        role: 'SUPERVISOR'
++    });
+ 
+-        if (!plan) {
+-            return res.status(404).json({
+-                success: false,
+-                message: "plan not found"
+-            })
+-        }
++    return Boolean(membership);
++}
+ 
+-        let organization = await organizationModel.create({
+-            name: name.trim(),
+-            planId: planId
+-        })
+ 
+-        // Add the creator as supervisor so the organization can be managed
++// CREATE ORGANIZATION
++// The creator becomes a Supervisor member of the organization.
++organizationRouter.post(
++    '/',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
+         try {
+-            await membershipModel.create({
+-                userId: req.user.id,
+-                organizationId: organization._id,
+-                role: "SUPERVISOR"
+-            })
++            const { name, planId } = req.body;
++
++            const allowedFields = ['name', 'planId'];
++
++            if (
++                Object.keys(req.body).some(
++                    key => !allowedFields.includes(key)
++                )
++            ) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Invalid fields in request body'
++                });
++            }
++
++            if (
++                typeof name !== 'string' ||
++                !name.trim() ||
++                !planId ||
++                !Types.ObjectId.isValid(planId)
++            ) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Valid name and planId are required'
++                });
++            }
++
++            const plan = await planModel.findById(planId);
++
++            if (!plan) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'Plan not found'
++                });
++            }
++
++            const organization = await organizationModel.create({
++                name: name.trim(),
++                planId
++            });
++
++            try {
++                await membershipModel.create({
++                    userId: req.user.id,
++                    organizationId: organization._id,
++                    role: 'SUPERVISOR'
++                });
++            } catch (err) {
++                await organizationModel.findByIdAndDelete(
++                    organization._id
++                );
++                throw err;
++            }
++
++            return res.status(201).json({
++                success: true,
++                message: 'Organization created successfully',
++                data: organization
++            });
+         } catch (err) {
+-            await organizationModel.findByIdAndDelete(organization._id)
+-            throw err
+-        }
++            if (err.code === 11000) {
++                return res.status(409).json({
++                    success: false,
++                    message: 'Organization name already exists'
++                });
++            }
+ 
+-        res.status(201).json({
+-            success: true,
+-            message: "organization created successfully",
+-            data: organization
+-        })
+-    } catch (err) {
+-        if (err.code === 11000) {
+-            return res.status(409).json({
++            console.error(err);
++
++            return res.status(500).json({
+                 success: false,
+-                message: "organization name already exists"
+-            })
++                message: 'Failed to create organization'
++            });
+         }
+-
+-        console.error(err)
+-        res.status(500).json({
+-            success: false,
+-            message: "failed to create organization"
+-        })
+     }
+-})
++);
+ 
+ 
+ // GET MEMBERSHIPS OF THE LOGGED-IN USER
+-organizationRouter.get("/mine", verifyToken, async (req, res) => {
+-    try {
+-        let memberships = await membershipModel.find({
+-            userId: req.user.id
+-        }).populate({
+-            path: "organizationId",
+-            select: "name planId",
+-            populate: { path: "planId", select: "name description" }
+-        })
+-
+-        res.status(200).json({
+-            success: true,
+-            message: memberships.length === 0 ? "no memberships found" : "your memberships",
+-            data: memberships
+-        })
+-    } catch (err) {
+-        console.error(err)
+-        res.status(500).json({
+-            success: false,
+-            message: "failed to fetch memberships"
+-        })
+-    }
+-})
+-
+-
+-// GET ONE ORGANIZATION (members only)
+-organizationRouter.get("/:orgId", verifyToken, async (req, res) => {
+-    try {
+-        let orgId = req.params.orgId
+-
+-        if (!Types.ObjectId.isValid(orgId)) {
+-            return res.status(400).json({
+-                success: false,
+-                message: "invalid organization ID"
+-            })
+-        }
+-
+-        let organization = await organizationModel.findById(orgId).populate("planId", "name description")
+-
+-        if (!organization) {
+-            return res.status(404).json({
+-                success: false,
+-                message: "organization not found"
+-            })
+-        }
+-
+-        let membership = await membershipModel.findOne({
+-            userId: req.user.id,
+-            organizationId: orgId
+-        })
++organizationRouter.get(
++    '/mine',
++    verifyToken,
++    async (req, res) => {
++        try {
++            const memberships = await membershipModel.find({
++                userId: req.user.id
++            }).populate({
++                path: 'organizationId',
++                select: 'name planId',
++                populate: {
++                    path: 'planId',
++                    select: 'name description'
++                }
++            });
++
++            return res.status(200).json({
++                success: true,
++                message: memberships.length === 0
++                    ? 'No memberships found'
++                    : 'Your memberships',
++                data: memberships
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        if (!membership) {
+-            return res.status(403).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "you are not a member of this organization"
+-            })
++                message: 'Failed to fetch memberships'
++            });
+         }
+-
+-        res.status(200).json({
+-            success: true,
+-            message: "organization details",
+-            data: organization
+-        })
+-    } catch (err) {
+-        console.error(err)
+-        res.status(500).json({
+-            success: false,
+-            message: "failed to fetch organization"
+-        })
+     }
+-})
++);
+ 
+ 
+-// GET MEMBERS OF AN ORGANIZATION (its supervisors only)
+-organizationRouter.get("/:orgId/members", verifyToken, allowedRoles("SUPERVISOR"), async (req, res) => {
+-    try {
+-        let orgId = req.params.orgId
++// GET ALL ORGANIZATIONS FOR THE SUPERVISOR PAGE
++organizationRouter.get(
++    '/',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
++        try {
++            const memberships = await membershipModel.find({
++                userId: req.user.id,
++                role: 'SUPERVISOR'
++            }).select('organizationId');
+ 
+-        if (!Types.ObjectId.isValid(orgId)) {
+-            return res.status(400).json({
+-                success: false,
+-                message: "invalid organization ID"
+-            })
+-        }
++            const organizationIds = memberships.map(
++                membership => membership.organizationId
++            );
+ 
+-        let organization = await organizationModel.findById(orgId)
++            const organizations = await organizationModel
++                .find({ _id: { $in: organizationIds } })
++                .populate('planId', 'name description');
+ 
+-        if (!organization) {
+-            return res.status(404).json({
+-                success: false,
+-                message: "organization not found"
+-            })
+-        }
++            return res.status(200).json({
++                success: true,
++                data: organizations
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        if (!(await isOrgSupervisor(req.user.id, orgId))) {
+-            return res.status(403).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "you are not authorized to view members of this organization"
+-            })
++                message: 'Failed to fetch organizations'
++            });
+         }
+-
+-        let memberships = await membershipModel.find({
+-            organizationId: orgId
+-        }).populate("userId", "name email role")
+-
+-        res.status(200).json({
+-            success: true,
+-            message: "organization members",
+-            data: memberships
+-        })
+-    } catch (err) {
+-        console.error(err)
+-        res.status(500).json({
+-            success: false,
+-            message: "failed to fetch members"
+-        })
+     }
+-})
++);
+ 
+ 
+-// ASSIGN A USER TO AN ORGANIZATION (its supervisors only)
+-organizationRouter.post("/:orgId/members", verifyToken, allowedRoles("SUPERVISOR"), async (req, res) => {
+-    try {
+-        let orgId = req.params.orgId
+-        let { userId, role } = req.body
++// GET AVAILABLE SPECIALISTS AND KNOWLEDGE MANAGERS
++organizationRouter.get(
++    '/available-users',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
++        try {
++            const users = await userModel.find({
++                role: {
++                    $in: ['SPECIALIST', 'KNOWLEDGE_MANAGER']
++                }
++            }).select('name email role');
++
++            return res.status(200).json({
++                success: true,
++                data: users
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        if (!Types.ObjectId.isValid(orgId)) {
+-            return res.status(400).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "invalid organization ID"
+-            })
++                message: 'Failed to fetch staff accounts'
++            });
+         }
++    }
++);
+ 
+-        // Reject unexpected fields
+-        let allowedFields = ['userId', 'role']
+ 
+-        if (Object.keys(req.body).some(key => !allowedFields.includes(key))) {
+-            return res.status(400).json({
+-                success: false,
+-                message: "Invalid fields in request body"
+-            })
+-        }
++// GET AVAILABLE CUSTOMERS
++organizationRouter.get(
++    '/available-customers',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
++        try {
++            const customers = await userModel.find({
++                role: 'CUSTOMER'
++            }).select('name email role');
++
++            return res.status(200).json({
++                success: true,
++                data: customers
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        if (!userId || !Types.ObjectId.isValid(userId) || !validRoles.includes(role)) {
+-            return res.status(400).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "Valid userId and role are required"
+-            })
++                message: 'Failed to fetch customer accounts'
++            });
+         }
++    }
++);
+ 
+-        let organization = await organizationModel.findById(orgId)
+ 
+-        if (!organization) {
+-            return res.status(404).json({
+-                success: false,
+-                message: "organization not found"
+-            })
+-        }
++// GET ONE ORGANIZATION (MEMBERS ONLY)
++organizationRouter.get(
++    '/:orgId',
++    verifyToken,
++    async (req, res) => {
++        try {
++            const { orgId } = req.params;
++
++            if (!Types.ObjectId.isValid(orgId)) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Invalid organization ID'
++                });
++            }
++
++            const organization = await organizationModel
++                .findById(orgId)
++                .populate('planId', 'name description');
++
++            if (!organization) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'Organization not found'
++                });
++            }
++
++            const membership = await membershipModel.findOne({
++                userId: req.user.id,
++                organizationId: orgId
++            });
++
++            if (!membership) {
++                return res.status(403).json({
++                    success: false,
++                    message: 'You are not a member of this organization'
++                });
++            }
++
++            return res.status(200).json({
++                success: true,
++                message: 'Organization details',
++                data: organization
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        if (!(await isOrgSupervisor(req.user.id, orgId))) {
+-            return res.status(403).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "you are not authorized to manage members of this organization"
+-            })
++                message: 'Failed to fetch organization'
++            });
+         }
++    }
++);
+ 
+-        let user = await userModel.findById(userId)
+ 
+-        if (!user) {
+-            return res.status(404).json({
+-                success: false,
+-                message: "user not found"
+-            })
+-        }
++// GET MEMBERS OF AN ORGANIZATION
++organizationRouter.get(
++    '/:orgId/members',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
++        try {
++            const { orgId } = req.params;
++
++            if (!Types.ObjectId.isValid(orgId)) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Invalid organization ID'
++                });
++            }
++
++            const organization = await organizationModel.findById(orgId);
++
++            if (!organization) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'Organization not found'
++                });
++            }
++
++            if (!(await isOrgSupervisor(req.user.id, orgId))) {
++                return res.status(403).json({
++                    success: false,
++                    message: 'You are not authorized to view members of this organization'
++                });
++            }
++
++            const memberships = await membershipModel.find({
++                organizationId: orgId
++            }).populate('userId', 'name email role');
++
++            return res.status(200).json({
++                success: true,
++                message: 'Organization members',
++                data: memberships
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        // Route checks use the account role, so the membership role must match it
+-        if (user.role !== role) {
+-            return res.status(400).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "role must match the user's account role"
+-            })
++                message: 'Failed to fetch members'
++            });
+         }
++    }
++);
+ 
+-        let existingMembership = await membershipModel.findOne({
+-            userId: userId,
+-            organizationId: orgId
+-        })
+ 
+-        if (existingMembership) {
+-            return res.status(409).json({
+-                success: false,
+-                message: "user is already a member of this organization"
+-            })
+-        }
++// GET ASSIGNABLE STAFF FOR A PARTICULAR ORGANIZATION
++organizationRouter.get(
++    '/:orgId/assignable-users',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
++        try {
++            const { orgId } = req.params;
++
++            if (!Types.ObjectId.isValid(orgId)) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Invalid organization ID'
++                });
++            }
++
++            const organization = await organizationModel.findById(orgId);
++
++            if (!organization) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'Organization not found'
++                });
++            }
++
++            if (!(await isOrgSupervisor(req.user.id, orgId))) {
++                return res.status(403).json({
++                    success: false,
++                    message: 'You are not authorized to manage this organization'
++                });
++            }
++
++            const existingMemberships = await membershipModel.find({
++                organizationId: orgId
++            }).select('userId');
++
++            const assignedUserIds = existingMemberships.map(
++                membership => membership.userId
++            );
++
++            const users = await userModel.find({
++                role: {
++                    $in: ['SPECIALIST', 'KNOWLEDGE_MANAGER']
++                },
++                _id: {
++                    $nin: assignedUserIds
++                }
++            }).select('name email role');
++
++            return res.status(200).json({
++                success: true,
++                data: users
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        let membership = await membershipModel.create({
+-            userId: userId,
+-            organizationId: orgId,
+-            role: role
+-        })
+-
+-        res.status(201).json({
+-            success: true,
+-            message: "member added successfully",
+-            data: membership
+-        })
+-    } catch (err) {
+-        if (err.code === 11000) {
+-            return res.status(409).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "user is already a member of this organization"
+-            })
++                message: 'Failed to fetch assignable users'
++            });
+         }
+-
+-        console.error(err)
+-        res.status(500).json({
+-            success: false,
+-            message: "failed to add member"
+-        })
+     }
+-})
+-
+-
+-// REMOVE A MEMBERSHIP (its organization's supervisors only)
+-organizationRouter.delete("/:orgId/members/:membershipId", verifyToken, allowedRoles("SUPERVISOR"), async (req, res) => {
+-    try {
+-        let { orgId, membershipId } = req.params
++);
+ 
+-        if (!Types.ObjectId.isValid(orgId) || !Types.ObjectId.isValid(membershipId)) {
+-            return res.status(400).json({
+-                success: false,
+-                message: "invalid organization or membership ID"
+-            })
+-        }
+ 
+-        let organization = await organizationModel.findById(orgId)
++// ASSIGN A CUSTOMER, SPECIALIST, OR KNOWLEDGE MANAGER
++organizationRouter.post(
++    '/:orgId/members',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
++        try {
++            const { orgId } = req.params;
++            const { userId, role } = req.body;
++
++            if (!Types.ObjectId.isValid(orgId)) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Invalid organization ID'
++                });
++            }
++
++            const allowedFields = ['userId', 'role'];
++
++            if (
++                Object.keys(req.body).some(
++                    key => !allowedFields.includes(key)
++                )
++            ) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Invalid fields in request body'
++                });
++            }
++
++            if (
++                !userId ||
++                !Types.ObjectId.isValid(userId) ||
++                !validRoles.includes(role) ||
++                role === 'SUPERVISOR'
++            ) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Valid userId and assignable role are required'
++                });
++            }
++
++            const organization = await organizationModel.findById(orgId);
++
++            if (!organization) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'Organization not found'
++                });
++            }
++
++            if (!(await isOrgSupervisor(req.user.id, orgId))) {
++                return res.status(403).json({
++                    success: false,
++                    message: 'You are not authorized to manage members of this organization'
++                });
++            }
++
++            const user = await userModel.findById(userId);
++
++            if (!user) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'User not found'
++                });
++            }
++
++            if (
++                !['CUSTOMER', 'SPECIALIST', 'KNOWLEDGE_MANAGER'].includes(role) ||
++                user.role !== role
++            ) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'The selected role must match the user account role'
++                });
++            }
++
++            const existingMembership = await membershipModel.findOne({
++                userId,
++                organizationId: orgId
++            });
++
++            if (existingMembership) {
++                return res.status(409).json({
++                    success: false,
++                    message: 'User is already a member of this organization'
++                });
++            }
++
++            const membership = await membershipModel.create({
++                userId,
++                organizationId: orgId,
++                role
++            });
++
++            return res.status(201).json({
++                success: true,
++                message: 'Member added successfully',
++                data: membership
++            });
++        } catch (err) {
++            if (err.code === 11000) {
++                return res.status(409).json({
++                    success: false,
++                    message: 'User is already a member of this organization'
++                });
++            }
+ 
+-        if (!organization) {
+-            return res.status(404).json({
+-                success: false,
+-                message: "organization not found"
+-            })
+-        }
++            console.error(err);
+ 
+-        if (!(await isOrgSupervisor(req.user.id, orgId))) {
+-            return res.status(403).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "you are not authorized to manage members of this organization"
+-            })
++                message: 'Failed to add member'
++            });
+         }
++    }
++);
+ 
+-        // Membership must belong to the organization in the URL
+-        let membership = await membershipModel.findOne({
+-            _id: membershipId,
+-            organizationId: orgId
+-        })
+ 
+-        if (!membership) {
+-            return res.status(404).json({
+-                success: false,
+-                message: "membership not found"
+-            })
+-        }
++// REMOVE A MEMBER FROM AN ORGANIZATION
++organizationRouter.delete(
++    '/:orgId/members/:membershipId',
++    verifyToken,
++    allowedRoles('SUPERVISOR'),
++    async (req, res) => {
++        try {
++            const { orgId, membershipId } = req.params;
++
++            if (
++                !Types.ObjectId.isValid(orgId) ||
++                !Types.ObjectId.isValid(membershipId)
++            ) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'Invalid organization or membership ID'
++                });
++            }
++
++            const organization = await organizationModel.findById(orgId);
++
++            if (!organization) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'Organization not found'
++                });
++            }
++
++            if (!(await isOrgSupervisor(req.user.id, orgId))) {
++                return res.status(403).json({
++                    success: false,
++                    message: 'You are not authorized to manage members of this organization'
++                });
++            }
++
++            const membership = await membershipModel.findOne({
++                _id: membershipId,
++                organizationId: orgId
++            });
++
++            if (!membership) {
++                return res.status(404).json({
++                    success: false,
++                    message: 'Membership not found'
++                });
++            }
++
++            if (membership.userId.toString() === req.user.id) {
++                return res.status(400).json({
++                    success: false,
++                    message: 'You cannot remove your own membership'
++                });
++            }
++
++            await membershipModel.findByIdAndDelete(membershipId);
++
++            return res.status(200).json({
++                success: true,
++                message: 'Member removed successfully'
++            });
++        } catch (err) {
++            console.error(err);
+ 
+-        // Prevent supervisors from locking themselves out
+-        if (membership.userId.toString() === req.user.id) {
+-            return res.status(400).json({
++            return res.status(500).json({
+                 success: false,
+-                message: "you cannot remove your own membership"
+-            })
++                message: 'Failed to remove member'
++            });
+         }
+-
+-        await membershipModel.findByIdAndDelete(membershipId)
+-
+-        res.status(200).json({
+-            success: true,
+-            message: "member removed successfully"
+-        })
+-    } catch (err) {
+-        console.error(err)
+-        res.status(500).json({
+-            success: false,
+-            message: "failed to remove member"
+-        })
+     }
+-})
++);
+diff --git a/frontend/src/components/sidebar/Sidebar.jsx b/frontend/src/components/sidebar/Sidebar.jsx
+index 6e56911..0b7d767 100644
+--- a/frontend/src/components/sidebar/Sidebar.jsx
++++ b/frontend/src/components/sidebar/Sidebar.jsx
+@@ -6,32 +6,32 @@ function Sidebar() {
+   const role = user?.role;
+ 
+   const navItems = [
+-    {
+-      label: "Dashboard",
+-      path: "/dashboard",
+-      show: true,
+-    },
+-    {
+-      label: "Subscriptions",
+-      path: "/subscriptions",
+-      show: ["CUSTOMER", "SUPERVISOR"].includes(role),
+-    },
+-    {
+-      label: "Support",
+-      path: "/support",
+-      show: true,
+-    },
+-    {
+-      label: "Specialist Tickets",
+-      path: "/specialist",
+-      show: ["SPECIALIST", "SUPERVISOR"].includes(role),
+-    },
+-    {
+-      label: "Knowledge Base",
+-      path: "/knowledge",
+-      show: ["KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
+-    },
+-  ];
++  {
++    label: "Subscriptions",
++    path: "/subscriptions",
++    show: ["CUSTOMER", "KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
++  },
++  {
++    label: "Supervisor",
++    path: "/supervisor",
++    show: role === "SUPERVISOR"
++},
++  {
++    label: "Support",
++    path: "/support",
++    show: ["CUSTOMER", "SPECIALIST", "KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
++  },
++  {
++    label: "Specialist Tickets",
++    path: "/specialist",
++    show: ["SPECIALIST", "SUPERVISOR"].includes(role),
++  },
++  {
++    label: "Knowledge Base",
++    path: "/knowledge",
++    show: ["KNOWLEDGE_MANAGER", "SUPERVISOR"].includes(role),
++  },
++];
+ 
+   return (
+     <aside className="sidebar">
+diff --git a/frontend/src/pages/Dashboard.jsx b/frontend/src/pages/Dashboard.jsx
+index 4b7d1d7..c48d518 100644
+--- a/frontend/src/pages/Dashboard.jsx
++++ b/frontend/src/pages/Dashboard.jsx
+@@ -1,370 +1,19 @@
+-import { useEffect, useState } from "react";
+-import { useNavigate } from "react-router-dom";
+-import { useAuth } from "../auth/AuthContext";
++
+ import PageHeader from "../components/common/PageHeader";
+ import Card from "../components/common/Card";
+-import Button from "../components/common/Button";
+-import api from "../services/api";
+-import "./RolePages.css";
+-
+-const DRAFTS_STORAGE_KEY = "km_drafts";
+ 
+ function Dashboard() {
+-  const { user } = useAuth();
+-  const navigate = useNavigate();
+-  const role = user?.role || "CUSTOMER";
+-
+-  const [publishedCount, setPublishedCount] = useState(0);
+-  const [draftCount, setDraftCount] = useState(0);
+-  const [recentArticles, setRecentArticles] = useState([]);
+-  const [incidents, setIncidents] = useState([]);
+-  const [systemStatus, setSystemStatus] = useState("Operational");
+-  const [loading, setLoading] = useState(true);
+-
+-  useEffect(() => {
+-    let ignore = false;
+-
+-    async function loadDashboardMetrics() {
+-      setLoading(true);
+-      try {
+-        // 1. Fetch published articles from GET /api/help
+-        try {
+-          const helpRes = await api.get("/help");
+-          if (!ignore && Array.isArray(helpRes?.data)) {
+-            setPublishedCount(helpRes.data.length);
+-            setRecentArticles(helpRes.data.slice(0, 3));
+-          }
+-        } catch {
+-          if (!ignore) {
+-            setPublishedCount(0);
+-            setRecentArticles([]);
+-          }
+-        }
+-
+-        // 2. Read local drafts count from localStorage
+-        try {
+-          const savedDrafts = localStorage.getItem(DRAFTS_STORAGE_KEY);
+-          if (savedDrafts) {
+-            const parsed = JSON.parse(savedDrafts);
+-            if (!ignore && Array.isArray(parsed)) {
+-              setDraftCount(parsed.length);
+-            }
+-          }
+-        } catch {
+-          // ignore parsing error
+-        }
+-
+-        // 3. Fetch incident/service status from GET /api/status
+-        try {
+-          const statusRes = await api.get("/status");
+-          if (!ignore && statusRes?.data) {
+-            const list = Array.isArray(statusRes.data) ? statusRes.data : [];
+-            setIncidents(list);
+-            const hasOutage = list.some(
+-              (i) => i.status && i.status !== "RESOLVED" && i.status !== "OPERATIONAL"
+-            );
+-            setSystemStatus(hasOutage ? "Degraded" : "All Systems Operational");
+-          }
+-        } catch {
+-          if (!ignore) setSystemStatus("Operational");
+-        }
+-      } finally {
+-        if (!ignore) setLoading(false);
+-      }
+-    }
+-
+-    loadDashboardMetrics();
+-
+-    return () => {
+-      ignore = true;
+-    };
+-  }, []);
+-
+   return (
+-    <div className="dashboard-container">
+-      {/* WELCOME BANNER */}
+-      <div className="dashboard-welcome-card">
+-        <div className="dashboard-welcome-text">
+-          <h2>Welcome back, {user?.name || "Team Member"}!</h2>
+-          <p>
+-            Here is your subscription support desk overview and quick management actions.
+-          </p>
+-        </div>
+-        <div className="dashboard-role-pill">
+-          ROLE: {role}
+-        </div>
+-      </div>
+-
+-      <PageHeader
+-        title="Overview & Metrics"
+-        description="Key statistics and system health indicators."
+-      />
+-
+-      {/* METRICS OVERVIEW GRID */}
+-      <div className="metrics-grid">
+-        <div className="metric-card">
+-          <div className="metric-icon-box metric-icon-blue">📚</div>
+-          <div className="metric-info">
+-            <span className="metric-number">{loading ? "..." : publishedCount}</span>
+-            <span className="metric-title">Published Articles</span>
+-          </div>
+-        </div>
+-
+-        <div className="metric-card">
+-          <div className="metric-icon-box metric-icon-amber">📝</div>
+-          <div className="metric-info">
+-            <span className="metric-number">{loading ? "..." : draftCount}</span>
+-            <span className="metric-title">Active Drafts</span>
+-          </div>
+-        </div>
+-
+-        <div className="metric-card">
+-          <div className="metric-icon-box metric-icon-purple">🤖</div>
+-          <div className="metric-info">
+-            <span className="metric-number">Vector AI</span>
+-            <span className="metric-title">Search & Embeddings</span>
+-          </div>
+-        </div>
+-
+-        <div className="metric-card">
+-          <div className="metric-icon-box metric-icon-green">⚡</div>
+-          <div className="metric-info">
+-            <span className="metric-number" style={{ fontSize: "16px" }}>
+-              {systemStatus}
+-            </span>
+-            <span className="metric-title">Platform Health</span>
+-          </div>
+-        </div>
+-      </div>
+-
+-      {/* QUICK ACTIONS SECTION */}
++    <>
+       <PageHeader
+-        title="Quick Actions"
+-        description="Jump straight into your daily workflow tools."
++        title="Dashboard"
++        description="Overview of your subscription support desk."
+       />
+ 
+-      <div className="quick-actions-grid">
+-        {(role === "KNOWLEDGE_MANAGER" || role === "SUPERVISOR") && (
+-          <div
+-            className="quick-action-card"
+-            onClick={() => navigate("/knowledge")}
+-          >
+-            <div className="quick-action-header">
+-              <span style={{ fontSize: "28px" }}>📖</span>
+-              <div>
+-                <h4>Knowledge Base Manager</h4>
+-                <p className="quick-action-desc">
+-                  Write help documentation, save drafts, and publish articles for AI vector search.
+-                </p>
+-              </div>
+-            </div>
+-            <Button
+-              type="button"
+-              className="btn-primary"
+-              style={{ alignSelf: "flex-start", marginTop: "8px" }}
+-              onClick={(e) => {
+-                e.stopPropagation();
+-                navigate("/knowledge");
+-              }}
+-            >
+-              Open Knowledge Base →
+-            </Button>
+-          </div>
+-        )}
+-
+-        {(role === "SPECIALIST" || role === "SUPERVISOR") && (
+-          <div
+-            className="quick-action-card"
+-            onClick={() => navigate("/specialist")}
+-          >
+-            <div className="quick-action-header">
+-              <span style={{ fontSize: "28px" }}>🎫</span>
+-              <div>
+-                <h4>Specialist Ticket Desk</h4>
+-                <p className="quick-action-desc">
+-                  View and update escalated customer tickets, adjust priorities, and track resolution.
+-                </p>
+-              </div>
+-            </div>
+-            <Button
+-              type="button"
+-              className="btn-primary"
+-              style={{ alignSelf: "flex-start", marginTop: "8px" }}
+-              onClick={(e) => {
+-                e.stopPropagation();
+-                navigate("/specialist");
+-              }}
+-            >
+-              Open Ticket Desk →
+-            </Button>
+-          </div>
+-        )}
+-
+-        <div
+-          className="quick-action-card"
+-          onClick={() => navigate("/support")}
+-        >
+-          <div className="quick-action-header">
+-            <span style={{ fontSize: "28px" }}>💬</span>
+-            <div>
+-              <h4>Support & AI Chat</h4>
+-              <p className="quick-action-desc">
+-                Access interactive customer conversations and automated AI knowledge retrieval.
+-              </p>
+-            </div>
+-          </div>
+-          <Button
+-            type="button"
+-            className="btn-secondary"
+-            style={{ alignSelf: "flex-start", marginTop: "8px" }}
+-            onClick={(e) => {
+-              e.stopPropagation();
+-              navigate("/support");
+-            }}
+-          >
+-            Launch Support →
+-          </Button>
+-        </div>
+-
+-        {(role === "CUSTOMER" || role === "SUPERVISOR") && (
+-          <div
+-            className="quick-action-card"
+-            onClick={() => navigate("/subscriptions")}
+-          >
+-            <div className="quick-action-header">
+-              <span style={{ fontSize: "28px" }}>💳</span>
+-              <div>
+-                <h4>Subscription Plans</h4>
+-                <p className="quick-action-desc">
+-                  Manage active plans, view quota entitlements, and adjust organization tiers.
+-                </p>
+-              </div>
+-            </div>
+-            <Button
+-              type="button"
+-              className="btn-secondary"
+-              style={{ alignSelf: "flex-start", marginTop: "8px" }}
+-              onClick={(e) => {
+-                e.stopPropagation();
+-                navigate("/subscriptions");
+-              }}
+-            >
+-              Manage Plans →
+-            </Button>
+-          </div>
+-        )}
+-      </div>
+-
+-      {/* LOWER SECTION: SYSTEM HEALTH & RECENT HELP ARTICLES */}
+-      <div className="specialist-grid" style={{ marginTop: "10px" }}>
+-        {/* RECENT ARTICLES CARD */}
+-        <Card>
+-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+-            <h3 style={{ margin: 0 }}>Recent Published Articles</h3>
+-            {(role === "KNOWLEDGE_MANAGER" || role === "SUPERVISOR") && (
+-              <Button
+-                type="button"
+-                className="btn-secondary"
+-                style={{ fontSize: "12px", padding: "4px 10px" }}
+-                onClick={() => navigate("/knowledge")}
+-              >
+-                + New Article
+-              </Button>
+-            )}
+-          </div>
+-
+-          {loading ? (
+-            <p style={{ color: "#6b7280", margin: "16px 0 0 0" }}>Loading recent articles...</p>
+-          ) : recentArticles.length === 0 ? (
+-            <p style={{ color: "#6b7280", margin: "16px 0 0 0" }}>
+-              No published articles found. Use the Knowledge Base manager to publish help docs.
+-            </p>
+-          ) : (
+-            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "14px" }}>
+-              {recentArticles.map((art) => (
+-                <div
+-                  key={art._id}
+-                  style={{
+-                    padding: "12px",
+-                    border: "1px solid #e5e7eb",
+-                    borderRadius: "6px",
+-                    backgroundColor: "#f9fafb",
+-                  }}
+-                >
+-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+-                    <strong style={{ fontSize: "14px", color: "#111827" }}>{art.title}</strong>
+-                    <span className="ticket-status-badge badge-published">PUBLISHED</span>
+-                  </div>
+-                  <p style={{ fontSize: "13px", color: "#4b5563", margin: "6px 0 0 0" }}>
+-                    {art.content?.length > 100 ? `${art.content.substring(0, 100)}...` : art.content}
+-                  </p>
+-                </div>
+-              ))}
+-            </div>
+-          )}
+-        </Card>
+-
+-        {/* INCIDENT STATUS & PLATFORM HEALTH */}
+-        <Card>
+-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+-            <h3 style={{ margin: 0 }}>Service & Incident Status</h3>
+-            <span className={`status-badge-inline ${systemStatus === "Degraded" ? "status-degraded" : "status-operational"}`}>
+-              <span className={`status-dot ${systemStatus === "Degraded" ? "status-dot-amber" : "status-dot-green"}`} />
+-              {systemStatus}
+-            </span>
+-          </div>
+-
+-          <p style={{ fontSize: "13px", color: "#6b7280", margin: "8px 0 14px 0" }}>
+-            Real-time health monitor for support chat, ticket resolution, and vector embeddings.
+-          </p>
+-
+-          {incidents.length === 0 ? (
+-            <div
+-              style={{
+-                backgroundColor: "#ecfdf5",
+-                border: "1px solid #a7f3d0",
+-                borderRadius: "6px",
+-                padding: "16px",
+-                display: "flex",
+-                alignItems: "center",
+-                gap: "12px",
+-              }}
+-            >
+-              <span style={{ fontSize: "24px" }}>✅</span>
+-              <div>
+-                <strong style={{ color: "#065f46", fontSize: "14px" }}>
+-                  All systems operational
+-                </strong>
+-                <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#047857" }}>
+-                  AI search, embedding indexing, and ticketing services are operating normally.
+-                </p>
+-              </div>
+-            </div>
+-          ) : (
+-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+-              {incidents.map((inc, idx) => (
+-                <div
+-                  key={idx}
+-                  style={{
+-                    padding: "10px 14px",
+-                    border: "1px solid #fde68a",
+-                    backgroundColor: "#fffbeb",
+-                    borderRadius: "6px",
+-                  }}
+-                >
+-                  <strong style={{ fontSize: "13px", color: "#92400e" }}>
+-                    {inc.feature || "System"}: {inc.title || "Incident Reported"}
+-                  </strong>
+-                  <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#78350f" }}>
+-                    {inc.description}
+-                  </p>
+-                </div>
+-              ))}
+-            </div>
+-          )}
+-        </Card>
+-      </div>
+-    </div>
++      <Card>
++        <p>Welcome to your Subscription Support Desk!</p>
++      </Card>
++    </>
+   );
+ }
+ 
+diff --git a/frontend/src/pages/KnowledgeManager.jsx b/frontend/src/pages/KnowledgeManager.jsx
+index 2d016ba..7dbdd87 100644
+--- a/frontend/src/pages/KnowledgeManager.jsx
++++ b/frontend/src/pages/KnowledgeManager.jsx
+@@ -5,25 +5,10 @@ import Button from "../components/common/Button";
+ import api from "../services/api";
+ import "./RolePages.css";
+ 
+-const DRAFTS_STORAGE_KEY = "km_drafts";
+-
+ function KnowledgeManager() {
+-  const [publishedArticles, setPublishedArticles] = useState([]);
+-  const [drafts, setDrafts] = useState(() => {
+-    try {
+-      const saved = localStorage.getItem(DRAFTS_STORAGE_KEY);
+-      return saved ? JSON.parse(saved) : [];
+-    } catch {
+-      return [];
+-    }
+-  });
+-
++  const [articles, setArticles] = useState([]);
+   const [loading, setLoading] = useState(false);
+   const [searchQuery, setSearchQuery] = useState("");
+-  const [isSearching, setIsSearching] = useState(false);
+-  const [searchResults, setSearchResults] = useState([]);
+-  const [activeTab, setActiveTab] = useState("ALL"); // ALL, DRAFT, PUBLISHED
+-
+   const [title, setTitle] = useState("");
+   const [content, setContent] = useState("");
+   const [publishImmediately, setPublishImmediately] = useState(false);
+@@ -32,31 +17,16 @@ function KnowledgeManager() {
+   const [error, setError] = useState("");
+   const [successMessage, setSuccessMessage] = useState("");
+ 
+-  // Persist drafts to localStorage whenever drafts change
+-  function saveDrafts(updatedDrafts) {
+-    setDrafts(updatedDrafts);
+-    try {
+-      localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(updatedDrafts));
+-    } catch {
+-      // ignore storage write errors
+-    }
+-  }
+-
+   async function fetchArticles() {
+     setLoading(true);
+     setError("");
+     try {
+-      // Calls GET /api/help (Returns published articles)
++      // Calls GET /api/help (Supported by backend)
+       const res = await api.get("/help");
+       const list = Array.isArray(res?.data) ? res.data : [];
+-      setPublishedArticles(list);
++      setArticles(list);
+     } catch (err) {
+-      // 404 means no published articles found, which is a normal empty state
+-      if (err?.message?.includes("No published") || err?.status === 404) {
+-        setPublishedArticles([]);
+-      } else {
+-        setError(err?.message || "Failed to load help articles.");
+-      }
++      setError(err?.message || "Failed to load help articles.");
+     } finally {
+       setLoading(false);
+     }
+@@ -68,41 +38,18 @@ function KnowledgeManager() {
+ 
+   async function handleSearch(e) {
+     e.preventDefault();
+-    const query = searchQuery.trim().toLowerCase();
+-    if (!query) {
+-      setIsSearching(false);
+-      setSearchResults([]);
++    if (!searchQuery.trim()) {
+       fetchArticles();
+       return;
+     }
+ 
+     setLoading(true);
+     setError("");
+-    setIsSearching(true);
+-
+     try {
+-      // 1. Semantic search for published articles via backend
+-      let pubResults = [];
+-      try {
+-        const res = await api.post("/help/search", { query: searchQuery.trim() });
+-        pubResults = Array.isArray(res?.data) ? res.data : [];
+-      } catch {
+-        // Fallback to client-side filtering if search service is offline
+-        pubResults = publishedArticles.filter(
+-          (art) =>
+-            art.title?.toLowerCase().includes(query) ||
+-            art.content?.toLowerCase().includes(query)
+-        );
+-      }
+-
+-      // 2. Client-side filter for local drafts
+-      const draftResults = drafts.filter(
+-        (art) =>
+-          art.title?.toLowerCase().includes(query) ||
+-          art.content?.toLowerCase().includes(query)
+-      );
+-
+-      setSearchResults([...draftResults, ...pubResults]);
++      // Calls POST /api/help/search (Supported by backend)
++      const res = await api.post("/help/search", { query: searchQuery.trim() });
++      const list = Array.isArray(res?.data) ? res.data : [];
++      setArticles(list);
+     } catch (err) {
+       setError(err?.message || "Search failed.");
+     } finally {
+@@ -110,13 +57,6 @@ function KnowledgeManager() {
+     }
+   }
+ 
+-  function handleResetSearch() {
+-    setSearchQuery("");
+-    setIsSearching(false);
+-    setSearchResults([]);
+-    fetchArticles();
+-  }
+-
+   async function handleCreateArticle(e) {
+     e.preventDefault();
+     setError("");
+@@ -133,28 +73,15 @@ function KnowledgeManager() {
+         // Calls POST /api/help (Creates & immediately publishes & indexes)
+         await api.post("/help", { title: title.trim(), content: content.trim() });
+         setSuccessMessage("Article published and indexed successfully!");
+-        await fetchArticles();
+       } else {
+         // Calls POST /api/help/drafts (Creates DRAFT)
+-        const res = await api.post("/help/drafts", { title: title.trim(), content: content.trim() });
+-        const createdDraft = res?.data || {
+-          _id: `draft-${Date.now()}`,
+-          title: title.trim(),
+-          content: content.trim(),
+-          status: "DRAFT",
+-          createdAt: new Date().toISOString(),
+-        };
+-
+-        const updatedDrafts = [
+-          createdDraft,
+-          ...drafts.filter((d) => d._id !== createdDraft._id),
+-        ];
+-        saveDrafts(updatedDrafts);
+-        setSuccessMessage(`Draft "${createdDraft.title}" created successfully and saved!`);
++        await api.post("/help/drafts", { title: title.trim(), content: content.trim() });
++        setSuccessMessage("Draft article created successfully!");
+       }
+ 
+       setTitle("");
+       setContent("");
++      fetchArticles();
+     } catch (err) {
+       setError(err?.message || "Failed to create article.");
+     } finally {
+@@ -169,13 +96,8 @@ function KnowledgeManager() {
+     try {
+       // Calls POST /api/help/drafts/:articleId/publish (Supported by backend)
+       await api.post(`/help/drafts/${articleId}/publish`);
+-
+-      // Remove from drafts and refresh published list
+-      const updatedDrafts = drafts.filter((d) => d._id !== articleId);
+-      saveDrafts(updatedDrafts);
+-
+       setSuccessMessage("Draft article successfully published and indexed!");
+-      await fetchArticles();
++      fetchArticles();
+     } catch (err) {
+       setError(err?.message || "Failed to publish draft.");
+     } finally {
+@@ -183,26 +105,6 @@ function KnowledgeManager() {
+     }
+   }
+ 
+-  function handleDiscardDraft(articleId) {
+-    const updatedDrafts = drafts.filter((d) => d._id !== articleId);
+-    saveDrafts(updatedDrafts);
+-    setSuccessMessage("Draft discarded.");
+-  }
+-
+-  // Calculate items to display based on tab or active search
+-  const displayedArticles = isSearching
+-    ? searchResults
+-    : activeTab === "DRAFT"
+-    ? drafts
+-    : activeTab === "PUBLISHED"
+-    ? publishedArticles
+-    : [
+-        ...drafts,
+-        ...publishedArticles.filter(
+-          (pub) => !drafts.some((d) => d._id === pub._id)
+-        ),
+-      ];
+-
+   return (
+     <div className="knowledge-container">
+       <PageHeader
+@@ -274,123 +176,57 @@ function KnowledgeManager() {
+         <Card className="knowledge-card">
+           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+             <h3 style={{ margin: 0 }}>Articles Repository</h3>
+-            <span style={{ fontSize: "13px", color: "#6b7280" }}>
+-              {drafts.length + publishedArticles.length} total articles
+-            </span>
++            <span style={{ fontSize: "13px", color: "#6b7280" }}>{articles.length} items</span>
+           </div>
+ 
+-          {/* Search bar */}
+           <form onSubmit={handleSearch} style={{ display: "flex", gap: "8px" }}>
+             <input
+               type="text"
+               className="form-control"
+               style={{ flex: 1 }}
+-              placeholder="Search articles by query or keyword..."
++              placeholder="Search articles by query..."
+               value={searchQuery}
+               onChange={(e) => setSearchQuery(e.target.value)}
+             />
+             <Button type="submit" className="btn-secondary">
+               Search
+             </Button>
+-            {isSearching && (
+-              <Button type="button" onClick={handleResetSearch} className="btn-secondary">
+-                Clear
+-              </Button>
+-            )}
+           </form>
+ 
+-          {/* Filter Tabs */}
+-          {!isSearching && (
+-            <div className="tab-bar">
+-              <button
+-                type="button"
+-                className={`tab-btn ${activeTab === "ALL" ? "active" : ""}`}
+-                onClick={() => setActiveTab("ALL")}
+-              >
+-                All Articles
+-                <span className="tab-badge">{drafts.length + publishedArticles.length}</span>
+-              </button>
+-              <button
+-                type="button"
+-                className={`tab-btn ${activeTab === "DRAFT" ? "active" : ""}`}
+-                onClick={() => setActiveTab("DRAFT")}
+-              >
+-                Drafts
+-                <span className="tab-badge tab-badge-draft">{drafts.length}</span>
+-              </button>
+-              <button
+-                type="button"
+-                className={`tab-btn ${activeTab === "PUBLISHED" ? "active" : ""}`}
+-                onClick={() => setActiveTab("PUBLISHED")}
+-              >
+-                Published
+-                <span className="tab-badge">{publishedArticles.length}</span>
+-              </button>
+-            </div>
+-          )}
+-
+-          {isSearching && (
+-            <div style={{ fontSize: "13px", color: "#6b7280" }}>
+-              Showing search results for &ldquo;{searchQuery}&rdquo; ({searchResults.length} found)
+-            </div>
+-          )}
+-
+           {loading ? (
+             <p style={{ color: "#6b7280" }}>Loading articles...</p>
+-          ) : displayedArticles.length === 0 ? (
+-            <div style={{ padding: "24px 0", textAlign: "center", color: "#6b7280" }}>
+-              <p style={{ margin: "0 0 8px 0", fontSize: "15px" }}>
+-                {isSearching
+-                  ? "No matching articles found."
+-                  : activeTab === "DRAFT"
+-                  ? "No draft articles saved."
+-                  : activeTab === "PUBLISHED"
+-                  ? "No published articles found."
+-                  : "No articles available yet."}
+-              </p>
+-              <small>Use the form on the left to create and draft articles.</small>
+-            </div>
++          ) : articles.length === 0 ? (
++            <p style={{ color: "#6b7280" }}>No articles found.</p>
+           ) : (
+-            <div className="article-list" style={{ maxHeight: "480px", overflowY: "auto" }}>
+-              {displayedArticles.map((art) => {
+-                const isDraft = art.status === "DRAFT";
+-                return (
+-                  <div key={art._id} className="article-item">
+-                    <div className="article-header">
+-                      <h4 className="article-title">{art.title}</h4>
+-                      <span
+-                        className={`ticket-status-badge badge-${(art.status || "published").toLowerCase()}`}
++            <div className="article-list" style={{ maxHeight: "460px", overflowY: "auto" }}>
++              {articles.map((art) => (
++                <div key={art._id} className="article-item">
++                  <div className="article-header">
++                    <h4 className="article-title">{art.title}</h4>
++                    <span
++                      className={`ticket-status-badge badge-${(art.status || "published").toLowerCase()}`}
++                    >
++                      {art.status || "PUBLISHED"}
++                    </span>
++                  </div>
++                  <p className="article-content">
++                    {art.content?.length > 160 ? `${art.content.substring(0, 160)}...` : art.content}
++                  </p>
++                  {art.status === "DRAFT" && (
++                    <div style={{ marginTop: "6px" }}>
++                      <Button
++                        type="button"
++                        className="btn-secondary"
++                        style={{ fontSize: "12px", padding: "4px 10px" }}
++                        disabled={publishingId === art._id}
++                        onClick={() => handlePublishDraft(art._id)}
+                       >
+-                        {art.status || "PUBLISHED"}
+-                      </span>
++                        {publishingId === art._id ? "Publishing..." : "Publish Draft"}
++                      </Button>
+                     </div>
+-                    <p className="article-content">
+-                      {art.content?.length > 160 ? `${art.content.substring(0, 160)}...` : art.content}
+-                    </p>
+-                    {isDraft && (
+-                      <div style={{ display: "flex", gap: "8px", marginTop: "6px" }}>
+-                        <Button
+-                          type="button"
+-                          className="btn-primary"
+-                          style={{ fontSize: "12px", padding: "4px 12px" }}
+-                          disabled={publishingId === art._id}
+-                          onClick={() => handlePublishDraft(art._id)}
+-                        >
+-                          {publishingId === art._id ? "Publishing..." : "Publish Draft"}
+-                        </Button>
+-                        <Button
+-                          type="button"
+-                          className="btn-secondary"
+-                          style={{ fontSize: "12px", padding: "4px 10px" }}
+-                          onClick={() => handleDiscardDraft(art._id)}
+-                        >
+-                          Discard
+-                        </Button>
+-                      </div>
+-                    )}
+-                  </div>
+-                );
+-              })}
++                  )}
++                </div>
++              ))}
+             </div>
+           )}
+         </Card>
+diff --git a/frontend/src/pages/Login.jsx b/frontend/src/pages/Login.jsx
+index b52ea44..a9052e3 100644
+--- a/frontend/src/pages/Login.jsx
++++ b/frontend/src/pages/Login.jsx
+@@ -9,6 +9,18 @@ import {
+ import { useAuth } from "../auth/AuthContext.jsx";
+ import "./Login.css";
+ 
++
++function getRoleDestination(role) {
++  const roleDestinations = {
++    CUSTOMER: "/support",
++    SPECIALIST: "/support",
++    KNOWLEDGE_MANAGER: "/knowledge",
++    SUPERVISOR: "/supervisor",
++  };
++
++  return roleDestinations[role] || null;
++}
++
+ export default function Login() {
+   const { user, loading, login } = useAuth();
+   const navigate = useNavigate();
+@@ -24,8 +36,16 @@ export default function Login() {
+   }
+ 
+   if (user) {
+-    return <Navigate to="/dashboard" replace />;
+-  }
++  const destination = getRoleDestination(user.role);
++
++  return destination ? (
++    <Navigate to={destination} replace />
++  ) : (
++    <p className="login-message">
++      Unsupported account role. Please contact support.
++    </p>
++  );
++}
+ 
+   async function handleSubmit(event) {
+     event.preventDefault();
+@@ -35,32 +55,25 @@ export default function Login() {
+     try {
+       const authenticatedUser = await login(email.trim(), password);
+ 
+-      const roleDestinations = {
+-        CUSTOMER: "/dashboard",
+-        SPECIALIST: "/support",
+-        KNOWLEDGE_MANAGER: "/support",
+-        SUPERVISOR: "/dashboard",
+-      };
+-
+-      const destination =
+-        roleDestinations[authenticatedUser.role];
+-
+-      if (!destination) {
+-        setError(
+-          "Your account has an unsupported role. Please contact support."
+-        );
+-        return;
+-      }
+-
+-      const requestedPath = location.state?.from?.pathname;
+-
+-      // Use a safe, known application route instead of arbitrary URLs.
+-      navigate(
+-        requestedPath && requestedPath.startsWith("/")
+-          ? requestedPath
+-          : destination,
+-        { replace: true }
+-      );
++      
++const destination = getRoleDestination(authenticatedUser.role);
++
++if (!destination) {
++  setError(
++    "Your account has an unsupported role. Please contact support."
++  );
++  return;
++}
++
++const requestedPath = location.state?.from?.pathname;
++
++navigate(
++  requestedPath && requestedPath.startsWith("/")
++    ? requestedPath
++    : destination,
++  { replace: true }
++);
++
+     } catch (err) {
+       setError(err.message || "Unable to log in. Please try again.");
+     } finally {
+diff --git a/frontend/src/pages/RolePages.css b/frontend/src/pages/RolePages.css
+index bb772a7..999b9df 100644
+--- a/frontend/src/pages/RolePages.css
++++ b/frontend/src/pages/RolePages.css
+@@ -185,249 +185,3 @@
+   color: #991b1b;
+   border: 1px solid #fecaca;
+ }
+-
+-/* TABS STYLING */
+-.tab-bar {
+-  display: flex;
+-  gap: 8px;
+-  border-bottom: 1px solid #e5e7eb;
+-  padding-bottom: 8px;
+-  margin-bottom: 8px;
+-}
+-
+-.tab-btn {
+-  background: transparent;
+-  border: none;
+-  padding: 6px 14px;
+-  border-radius: 6px;
+-  font-size: 13px;
+-  font-weight: 500;
+-  color: #4b5563;
+-  cursor: pointer;
+-  display: flex;
+-  align-items: center;
+-  gap: 6px;
+-  transition: all 0.2s ease;
+-}
+-
+-.tab-btn:hover {
+-  background-color: #f3f4f6;
+-  color: #111827;
+-}
+-
+-.tab-btn.active {
+-  background-color: #4f46e5;
+-  color: #ffffff;
+-}
+-
+-.tab-badge {
+-  background: rgba(0, 0, 0, 0.08);
+-  padding: 1px 6px;
+-  border-radius: 10px;
+-  font-size: 11px;
+-}
+-
+-.tab-btn.active .tab-badge {
+-  background: rgba(255, 255, 255, 0.25);
+-  color: #ffffff;
+-}
+-
+-.tab-badge-draft {
+-  background-color: #fef3c7;
+-  color: #92400e;
+-}
+-
+-.tab-btn.active .tab-badge-draft {
+-  background-color: #f59e0b;
+-  color: #ffffff;
+-}
+-
+-/* DASHBOARD STYLING */
+-.dashboard-container {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 20px;
+-}
+-
+-.dashboard-welcome-card {
+-  display: flex;
+-  justify-content: space-between;
+-  align-items: center;
+-  flex-wrap: wrap;
+-  gap: 16px;
+-  background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);
+-  color: #ffffff;
+-  border-radius: 10px;
+-  padding: 24px;
+-}
+-
+-.dashboard-welcome-text h2 {
+-  margin: 0 0 6px 0;
+-  font-size: 22px;
+-  font-weight: 700;
+-}
+-
+-.dashboard-welcome-text p {
+-  margin: 0;
+-  font-size: 14px;
+-  opacity: 0.9;
+-}
+-
+-.dashboard-role-pill {
+-  display: inline-block;
+-  background: rgba(255, 255, 255, 0.2);
+-  border: 1px solid rgba(255, 255, 255, 0.3);
+-  padding: 6px 14px;
+-  border-radius: 20px;
+-  font-size: 13px;
+-  font-weight: 600;
+-  letter-spacing: 0.5px;
+-}
+-
+-.metrics-grid {
+-  display: grid;
+-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+-  gap: 16px;
+-}
+-
+-.metric-card {
+-  background: #ffffff;
+-  border: 1px solid #e5e7eb;
+-  border-radius: 8px;
+-  padding: 18px 20px;
+-  display: flex;
+-  align-items: center;
+-  gap: 16px;
+-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+-}
+-
+-.metric-icon-box {
+-  width: 48px;
+-  height: 48px;
+-  border-radius: 10px;
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  font-size: 22px;
+-  flex-shrink: 0;
+-}
+-
+-.metric-icon-blue {
+-  background-color: #eff6ff;
+-  color: #2563eb;
+-}
+-
+-.metric-icon-purple {
+-  background-color: #f5f3ff;
+-  color: #7c3aed;
+-}
+-
+-.metric-icon-green {
+-  background-color: #ecfdf5;
+-  color: #059669;
+-}
+-
+-.metric-icon-amber {
+-  background-color: #fffbeb;
+-  color: #d97706;
+-}
+-
+-.metric-info {
+-  display: flex;
+-  flex-direction: column;
+-}
+-
+-.metric-number {
+-  font-size: 22px;
+-  font-weight: 700;
+-  color: #111827;
+-  line-height: 1.2;
+-}
+-
+-.metric-title {
+-  font-size: 13px;
+-  color: #6b7280;
+-  font-weight: 500;
+-}
+-
+-.quick-actions-grid {
+-  display: grid;
+-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+-  gap: 16px;
+-}
+-
+-.quick-action-card {
+-  border: 1px solid #e5e7eb;
+-  border-radius: 8px;
+-  padding: 18px;
+-  background: #ffffff;
+-  display: flex;
+-  flex-direction: column;
+-  justify-content: space-between;
+-  gap: 12px;
+-  transition: transform 0.2s, box-shadow 0.2s;
+-  cursor: pointer;
+-}
+-
+-.quick-action-card:hover {
+-  transform: translateY(-2px);
+-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+-  border-color: #cbd5e1;
+-}
+-
+-.quick-action-header {
+-  display: flex;
+-  align-items: center;
+-  gap: 12px;
+-}
+-
+-.quick-action-header h4 {
+-  margin: 0;
+-  font-size: 16px;
+-  font-weight: 600;
+-  color: #111827;
+-}
+-
+-.quick-action-desc {
+-  font-size: 13px;
+-  color: #6b7280;
+-  margin: 0;
+-  line-height: 1.4;
+-}
+-
+-.status-badge-inline {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 6px;
+-  padding: 4px 10px;
+-  border-radius: 16px;
+-  font-size: 12px;
+-  font-weight: 600;
+-}
+-
+-.status-operational {
+-  background-color: #ecfdf5;
+-  color: #065f46;
+-  border: 1px solid #a7f3d0;
+-}
+-
+-.status-degraded {
+-  background-color: #fffbeb;
+-  color: #92400e;
+-  border: 1px solid #fde68a;
+-}
+-
+-.status-dot {
+-  width: 8px;
+-  height: 8px;
+-  border-radius: 50%;
+-  display: inline-block;
+-}
+-
+-.status-dot-green {
+-  background-color: #10b981;
+-}
+-
+-.status-dot-amber {
+-  background-color: #f59e0b;
+-}
+diff --git a/frontend/src/pages/Signup.jsx b/frontend/src/pages/Signup.jsx
+index dd05e63..9b229c2 100644
+--- a/frontend/src/pages/Signup.jsx
++++ b/frontend/src/pages/Signup.jsx
+@@ -6,12 +6,13 @@ import "./Signup.css";
+ export default function Signup() {
+   const navigate = useNavigate();
+ 
+-  const [form, setForm] = useState({
+-    name: "",
+-    email: "",
+-    password: "",
+-    confirmPassword: "",
+-  });
++const [form, setForm] = useState({
++  name: "",
++  email: "",
++  password: "",
++  confirmPassword: "",
++  role: "CUSTOMER",
++});
+ 
+   const [error, setError] = useState("");
+   const [loading, setLoading] = useState(false);
+@@ -44,10 +45,11 @@ export default function Signup() {
+       const result = await apiRequest("/auth/signup", {
+         method: "POST",
+         body: JSON.stringify({
+-          name: form.name.trim(),
+-          email: form.email.trim(),
+-          password: form.password,
+-        }),
++  name: form.name.trim(),
++  email: form.email.trim(),
++  password: form.password,
++  role: form.role,
++}),
+       });
+ 
+       if (result.success) {
+@@ -93,6 +95,20 @@ export default function Signup() {
+           required
+         />
+ 
++<label htmlFor="role">Account role</label>
++<select
++  id="role"
++  name="role"
++  value={form.role}
++  onChange={handleChange}
++  required
++>
++  <option value="CUSTOMER">Customer</option>
++  <option value="SPECIALIST">Support Specialist</option>
++  <option value="KNOWLEDGE_MANAGER">Knowledge Manager</option>
++  <option value="SUPERVISOR">Supervisor</option>
++</select>
++
+         <label htmlFor="password">Password</label>
+         <input
+           id="password"
+diff --git a/frontend/src/pages/Supervisor.jsx b/frontend/src/pages/Supervisor.jsx
+new file mode 100644
+index 0000000..d1fae9d
+--- /dev/null
++++ b/frontend/src/pages/Supervisor.jsx
+@@ -0,0 +1,444 @@
++import { useEffect, useState } from "react";
++import { apiRequest } from "../api/client";
++
++export default function Supervisor() {
++    const [plans, setPlans] = useState([]);
++    const [organizations, setOrganizations] = useState([]);
++    const [users, setUsers] = useState([]);
++    const [customers, setCustomers] = useState([]);
++    const [members, setMembers] = useState([]);
++
++    const [selectedOrgId, setSelectedOrgId] = useState("");
++    const [customerOrgId, setCustomerOrgId] = useState("");
++    const [customerId, setCustomerId] = useState("");
++
++    const [name, setName] = useState("");
++    const [planId, setPlanId] = useState("");
++    const [orgId, setOrgId] = useState("");
++    const [userId, setUserId] = useState("");
++    const [role, setRole] = useState("SPECIALIST");
++
++    const [message, setMessage] = useState("");
++    const [loading, setLoading] = useState(true);
++    const [membersLoading, setMembersLoading] = useState(false);
++
++    
++async function loadData() {
++    try {
++        setLoading(true);
++        setMessage("");
++
++        const [p, o, u] = await Promise.all([
++            apiRequest("/plans"),
++            apiRequest("/organizations"),
++            apiRequest("/organizations/available-users")
++        ]);
++
++        setPlans(Array.isArray(p.data) ? p.data : []);
++        setOrganizations(Array.isArray(o.data) ? o.data : []);
++        setUsers(Array.isArray(u.data) ? u.data : []);
++
++        if (p.data?.length) {
++            setPlanId(previous => previous || p.data[0]._id);
++        }
++
++        if (o.data?.length) {
++            setOrgId(previous => previous || o.data[0]._id);
++            setCustomerOrgId(previous => previous || o.data[0]._id);
++        }
++
++        try {
++            const c = await apiRequest(
++                "/organizations/available-customers"
++            );
++
++            console.log("Available customers response:", c);
++            setCustomers(Array.isArray(c.data) ? c.data : []);
++        } catch (err) {
++            console.error("Could not load customers:", err);
++            setCustomers([]);
++            setMessage(
++                "Could not load customers. Check the browser console."
++            );
++        }
++    } catch (err) {
++        console.error("Could not load Supervisor data:", err);
++        setMessage(err.message || "Could not load Supervisor data.");
++    } finally {
++        setLoading(false);
++    }
++}
++
++
++    useEffect(() => {
++        loadData();
++    }, []);
++
++    async function createOrganization(event) {
++        event.preventDefault();
++        setMessage("");
++
++        try {
++            await apiRequest("/organizations", {
++                method: "POST",
++                body: JSON.stringify({ name, planId })
++            });
++
++            setName("");
++            setMessage("Organization created successfully.");
++            await loadData();
++        } catch (err) {
++            setMessage(err.message || "Could not create organization.");
++        }
++    }
++
++    async function assignMember(event) {
++        event.preventDefault();
++        setMessage("");
++
++        try {
++            await apiRequest(`/organizations/${orgId}/members`, {
++                method: "POST",
++                body: JSON.stringify({ userId, role })
++            });
++
++            setMessage("Staff member assigned successfully.");
++            setUserId("");
++
++            if (selectedOrgId === orgId) {
++                await viewMembers(orgId);
++            }
++
++            await loadData();
++        } catch (err) {
++            setMessage(err.message || "Could not assign staff member.");
++        }
++    }
++
++    async function assignCustomer(event) {
++        event.preventDefault();
++        setMessage("");
++
++        try {
++            await apiRequest(`/organizations/${customerOrgId}/members`, {
++                method: "POST",
++                body: JSON.stringify({
++                    userId: customerId,
++                    role: "CUSTOMER"
++                })
++            });
++
++            setMessage("Customer added to organization successfully.");
++            setCustomerId("");
++
++            if (selectedOrgId === customerOrgId) {
++                await viewMembers(customerOrgId);
++            }
++
++            await loadData();
++        } catch (err) {
++            setMessage(err.message || "Could not add customer.");
++        }
++    }
++
++    async function viewMembers(organizationId) {
++        setMessage("");
++        setSelectedOrgId(organizationId);
++        setMembers([]);
++        setMembersLoading(true);
++
++        try {
++            const response = await apiRequest(
++                `/organizations/${organizationId}/members`
++            );
++
++            setMembers(Array.isArray(response.data) ? response.data : []);
++        } catch (err) {
++            setMessage(err.message || "Could not load organization members.");
++        } finally {
++            setMembersLoading(false);
++        }
++    }
++
++    async function removeMember(membershipId) {
++        const confirmed = window.confirm(
++            "Are you sure you want to remove this member from the organization?"
++        );
++
++        if (!confirmed) return;
++
++        setMessage("");
++
++        try {
++            await apiRequest(
++                `/organizations/${selectedOrgId}/members/${membershipId}`,
++                { method: "DELETE" }
++            );
++
++            setMessage("Member removed successfully.");
++            await viewMembers(selectedOrgId);
++            await loadData();
++        } catch (err) {
++            setMessage(err.message || "Could not remove member.");
++        }
++    }
++
++    if (loading) {
++        return <p>Loading Supervisor page...</p>;
++    }
++
++    return (
++        <div style={{ maxWidth: 900, padding: 24 }}>
++            <h1>Supervisor Management</h1>
++
++            {message && <p role="status">{message}</p>}
++
++            <section style={{ marginBottom: 32 }}>
++                <h2>Create Organization</h2>
++
++                <form onSubmit={createOrganization}>
++                    <input
++                        value={name}
++                        onChange={e => setName(e.target.value)}
++                        placeholder="Organization name"
++                        required
++                    />
++
++                    <select
++                        value={planId}
++                        onChange={e => setPlanId(e.target.value)}
++                        required
++                    >
++                        <option value="">Select a plan</option>
++                        {plans.map(plan => (
++                            <option key={plan._id} value={plan._id}>
++                                {plan.name}
++                            </option>
++                        ))}
++                    </select>
++
++                    <button type="submit" disabled={!plans.length}>
++                        Create Organization
++                    </button>
++                </form>
++
++                {!plans.length && (
++                    <p>Create a plan first before creating an organization.</p>
++                )}
++            </section>
++
++            <section style={{ marginBottom: 32 }}>
++                <h2>Existing Organizations</h2>
++
++                {organizations.length === 0 ? (
++                    <p>No organizations created yet.</p>
++                ) : (
++                    <ul>
++                        {organizations.map(org => (
++                            <li key={org._id} style={{ marginBottom: 12 }}>
++                                <strong>{org.name}</strong>
++                                {" — Plan: "}
++                                {org.planId?.name || "Unknown"}
++                                {" "}
++
++                                <button
++                                    type="button"
++                                    onClick={() => viewMembers(org._id)}
++                                >
++                                    View Members
++                                </button>
++                            </li>
++                        ))}
++                    </ul>
++                )}
++            </section>
++
++            {selectedOrgId && (
++                <section style={{ marginBottom: 32 }}>
++                    <h2>
++                        Organization Members —{" "}
++                        {organizations.find(
++                            org => org._id === selectedOrgId
++                        )?.name}
++                    </h2>
++
++                    {membersLoading ? (
++                        <p>Loading members...</p>
++                    ) : members.length === 0 ? (
++                        <p>No members found for this organization.</p>
++                    ) : (
++                        <ul>
++                            {members.map(member => {
++                                const memberUser = member.userId;
++
++                                return (
++                                    <li
++                                        key={member._id}
++                                        style={{ marginBottom: 12 }}
++                                    >
++                                        <strong>
++                                            {memberUser?.name || "Unknown user"}
++                                        </strong>
++                                        {" — "}
++                                        {memberUser?.email || "No email"}
++                                        {" — Role: "}
++                                        {member.role ||
++                                            memberUser?.role ||
++                                            "Unknown"}
++
++                                        <button
++                                            type="button"
++                                            onClick={() =>
++                                                removeMember(member._id)
++                                            }
++                                            style={{ marginLeft: 12 }}
++                                        >
++                                            Remove
++                                        </button>
++                                    </li>
++                                );
++                            })}
++                        </ul>
++                    )}
++
++                    <button
++                        type="button"
++                        onClick={() => {
++                            setSelectedOrgId("");
++                            setMembers([]);
++                        }}
++                    >
++                        Close Members
++                    </button>
++                </section>
++            )}
++
++            <section style={{ marginBottom: 32 }}>
++                <h2>Assign Staff to Organization</h2>
++
++                <form onSubmit={assignMember}>
++                    <label>
++                        Organization
++                        <select
++                            value={orgId}
++                            onChange={e => setOrgId(e.target.value)}
++                            required
++                        >
++                            <option value="">Select organization</option>
++                            {organizations.map(org => (
++                                <option key={org._id} value={org._id}>
++                                    {org.name}
++                                </option>
++                            ))}
++                        </select>
++                    </label>
++
++                    <br />
++                    <br />
++
++                    <label>
++                        Staff role
++                        <select
++                            value={role}
++                            onChange={e => {
++                                setRole(e.target.value);
++                                setUserId("");
++                            }}
++                        >
++                            <option value="SPECIALIST">Specialist</option>
++                            <option value="KNOWLEDGE_MANAGER">
++                                Knowledge Manager
++                            </option>
++                        </select>
++                    </label>
++
++                    <br />
++                    <br />
++
++                    <label>
++                        Staff account
++                        <select
++                            value={userId}
++                            onChange={e => setUserId(e.target.value)}
++                            required
++                        >
++                            <option value="">Select staff account</option>
++                            {users
++                                .filter(user => user.role === role)
++                                .map(user => (
++                                    <option key={user._id} value={user._id}>
++                                        {user.name} ({user.email})
++                                    </option>
++                                ))}
++                        </select>
++                    </label>
++
++                    <br />
++                    <br />
++
++                    <button
++                        type="submit"
++                        disabled={!orgId || !userId}
++                    >
++                        Assign Staff
++                    </button>
++                </form>
++            </section>
++
++            <section style={{ marginBottom: 32 }}>
++                <h2>Add Customer to Organization</h2>
++
++                <form onSubmit={assignCustomer}>
++                    <label>
++                        Organization
++                        <select
++                            value={customerOrgId}
++                            onChange={e => setCustomerOrgId(e.target.value)}
++                            required
++                        >
++                            <option value="">Select organization</option>
++                            {organizations.map(org => (
++                                <option key={org._id} value={org._id}>
++                                    {org.name}
++                                </option>
++                            ))}
++                        </select>
++                    </label>
++
++                    <br />
++                    <br />
++
++                    <label>
++                        Customer account
++                        <select
++                            value={customerId}
++                            onChange={e => setCustomerId(e.target.value)}
++                            required
++                        >
++                            <option value="">Select customer</option>
++                            {customers.map(customer => (
++                                <option key={customer._id} value={customer._id}>
++                                    {customer.name} ({customer.email})
++                                </option>
++                            ))}
++                        </select>
++                    </label>
++
++                    <br />
++                    <br />
++
++                    <button
++                        type="submit"
++                        disabled={!customerOrgId || !customerId}
++                    >
++                        Add Customer
++                    </button>
++                </form>
++
++                {customers.length === 0 && (
++                    <p>No customer accounts are currently available.</p>
++                )}
++            </section>
++        </div>
++    );
++}
+\ No newline at end of file
+diff --git a/frontend/src/routes/AppRoutes.jsx b/frontend/src/routes/AppRoutes.jsx
+index e512dc8..dab7858 100644
+--- a/frontend/src/routes/AppRoutes.jsx
++++ b/frontend/src/routes/AppRoutes.jsx
+@@ -9,6 +9,7 @@ import KnowledgeManager from "../pages/KnowledgeManager";
+ import Login from "../pages/Login";
+ import Signup from "../pages/Signup";
+ import ProtectedRoute from "../auth/ProtectedRoute";
++import Supervisor from "../pages/Supervisor";
+ 
+ function AppRoutes() {
+   return (
+@@ -39,6 +40,10 @@ function AppRoutes() {
+             }
+           >
+             <Route
++    element={<ProtectedRoute allowedRoles={["SUPERVISOR"]} />}>
++    <Route path="/supervisor" element={<Supervisor />} />
++</Route>
++            <Route
+               path="/subscriptions"
+               element={<Subscriptions />}
+             />
