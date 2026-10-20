@@ -15,6 +15,7 @@ import { helpRouter } from './routes/helpRouter.js'
 import { organizationRouter } from './routes/organizationRouter.js'
 import { planRouter } from './routes/planRouter.js'
 import { statusRouter } from './routes/statusRouter.js'
+import serviceStatusRouter from './routes/serviceStatusRouter.js'
 import { ticketRouter } from './routes/ticketRouter.js'
 
 // Load environment variables
@@ -41,6 +42,7 @@ app.use("/api/help", helpRouter)
 app.use("/api/organizations", organizationRouter)
 app.use("/api/plans", planRouter)
 app.use("/api/status", statusRouter)
+app.use("/api/service-status", serviceStatusRouter)
 app.use("/api/tickets", ticketRouter)
 app.use("/api/conversations", conversationRouter)
 

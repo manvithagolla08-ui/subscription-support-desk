@@ -3,6 +3,7 @@ import exp from "express";
 import { userModel } from "../models/userModel.js";
 import { hash, compare } from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { verifyToken } from "../middlewares/verifyToken.js";
 
 export const authRouter = exp.Router();
 
@@ -186,6 +187,37 @@ authRouter.post("/login", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "login failed",
+    });
+  }
+});
+
+// CURRENT USER (lets the frontend restore the session after a page reload)
+authRouter.get("/me", verifyToken, async (req, res) => {
+  try {
+    const user = await userModel.findById(req.user.id).select("name email role");
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "user no longer exists",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Fetching current user failed:", err.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "failed to fetch current user",
     });
   }
 });
