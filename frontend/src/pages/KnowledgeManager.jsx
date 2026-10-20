@@ -5,10 +5,25 @@ import Button from "../components/common/Button";
 import api from "../services/api";
 import "./RolePages.css";
 
+const DRAFTS_STORAGE_KEY = "km_drafts";
+
 function KnowledgeManager() {
-  const [articles, setArticles] = useState([]);
+  const [publishedArticles, setPublishedArticles] = useState([]);
+  const [drafts, setDrafts] = useState(() => {
+    try {
+      const saved = localStorage.getItem(DRAFTS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [activeTab, setActiveTab] = useState("ALL"); // ALL, DRAFT, PUBLISHED
+
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [publishImmediately, setPublishImmediately] = useState(false);
@@ -17,16 +32,31 @@ function KnowledgeManager() {
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
+  // Persist drafts to localStorage whenever drafts change
+  function saveDrafts(updatedDrafts) {
+    setDrafts(updatedDrafts);
+    try {
+      localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(updatedDrafts));
+    } catch {
+      // ignore storage write errors
+    }
+  }
+
   async function fetchArticles() {
     setLoading(true);
     setError("");
     try {
-      // Calls GET /api/help (Supported by backend)
+      // Calls GET /api/help (Returns published articles)
       const res = await api.get("/help");
       const list = Array.isArray(res?.data) ? res.data : [];
-      setArticles(list);
+      setPublishedArticles(list);
     } catch (err) {
-      setError(err?.message || "Failed to load help articles.");
+      // 404 means no published articles found, which is a normal empty state
+      if (err?.message?.includes("No published") || err?.status === 404) {
+        setPublishedArticles([]);
+      } else {
+        setError(err?.message || "Failed to load help articles.");
+      }
     } finally {
       setLoading(false);
     }
@@ -38,23 +68,53 @@ function KnowledgeManager() {
 
   async function handleSearch(e) {
     e.preventDefault();
-    if (!searchQuery.trim()) {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      setIsSearching(false);
+      setSearchResults([]);
       fetchArticles();
       return;
     }
 
     setLoading(true);
     setError("");
+    setIsSearching(true);
+
     try {
-      // Calls POST /api/help/search (Supported by backend)
-      const res = await api.post("/help/search", { query: searchQuery.trim() });
-      const list = Array.isArray(res?.data) ? res.data : [];
-      setArticles(list);
+      // 1. Semantic search for published articles via backend
+      let pubResults = [];
+      try {
+        const res = await api.post("/help/search", { query: searchQuery.trim() });
+        pubResults = Array.isArray(res?.data) ? res.data : [];
+      } catch {
+        // Fallback to client-side filtering if search service is offline
+        pubResults = publishedArticles.filter(
+          (art) =>
+            art.title?.toLowerCase().includes(query) ||
+            art.content?.toLowerCase().includes(query)
+        );
+      }
+
+      // 2. Client-side filter for local drafts
+      const draftResults = drafts.filter(
+        (art) =>
+          art.title?.toLowerCase().includes(query) ||
+          art.content?.toLowerCase().includes(query)
+      );
+
+      setSearchResults([...draftResults, ...pubResults]);
     } catch (err) {
       setError(err?.message || "Search failed.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleResetSearch() {
+    setSearchQuery("");
+    setIsSearching(false);
+    setSearchResults([]);
+    fetchArticles();
   }
 
   async function handleCreateArticle(e) {
@@ -73,15 +133,28 @@ function KnowledgeManager() {
         // Calls POST /api/help (Creates & immediately publishes & indexes)
         await api.post("/help", { title: title.trim(), content: content.trim() });
         setSuccessMessage("Article published and indexed successfully!");
+        await fetchArticles();
       } else {
         // Calls POST /api/help/drafts (Creates DRAFT)
-        await api.post("/help/drafts", { title: title.trim(), content: content.trim() });
-        setSuccessMessage("Draft article created successfully!");
+        const res = await api.post("/help/drafts", { title: title.trim(), content: content.trim() });
+        const createdDraft = res?.data || {
+          _id: `draft-${Date.now()}`,
+          title: title.trim(),
+          content: content.trim(),
+          status: "DRAFT",
+          createdAt: new Date().toISOString(),
+        };
+
+        const updatedDrafts = [
+          createdDraft,
+          ...drafts.filter((d) => d._id !== createdDraft._id),
+        ];
+        saveDrafts(updatedDrafts);
+        setSuccessMessage(`Draft "${createdDraft.title}" created successfully and saved!`);
       }
 
       setTitle("");
       setContent("");
-      fetchArticles();
     } catch (err) {
       setError(err?.message || "Failed to create article.");
     } finally {
@@ -96,14 +169,39 @@ function KnowledgeManager() {
     try {
       // Calls POST /api/help/drafts/:articleId/publish (Supported by backend)
       await api.post(`/help/drafts/${articleId}/publish`);
+
+      // Remove from drafts and refresh published list
+      const updatedDrafts = drafts.filter((d) => d._id !== articleId);
+      saveDrafts(updatedDrafts);
+
       setSuccessMessage("Draft article successfully published and indexed!");
-      fetchArticles();
+      await fetchArticles();
     } catch (err) {
       setError(err?.message || "Failed to publish draft.");
     } finally {
       setPublishingId(null);
     }
   }
+
+  function handleDiscardDraft(articleId) {
+    const updatedDrafts = drafts.filter((d) => d._id !== articleId);
+    saveDrafts(updatedDrafts);
+    setSuccessMessage("Draft discarded.");
+  }
+
+  // Calculate items to display based on tab or active search
+  const displayedArticles = isSearching
+    ? searchResults
+    : activeTab === "DRAFT"
+    ? drafts
+    : activeTab === "PUBLISHED"
+    ? publishedArticles
+    : [
+        ...drafts,
+        ...publishedArticles.filter(
+          (pub) => !drafts.some((d) => d._id === pub._id)
+        ),
+      ];
 
   return (
     <div className="knowledge-container">
@@ -176,57 +274,123 @@ function KnowledgeManager() {
         <Card className="knowledge-card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ margin: 0 }}>Articles Repository</h3>
-            <span style={{ fontSize: "13px", color: "#6b7280" }}>{articles.length} items</span>
+            <span style={{ fontSize: "13px", color: "#6b7280" }}>
+              {drafts.length + publishedArticles.length} total articles
+            </span>
           </div>
 
+          {/* Search bar */}
           <form onSubmit={handleSearch} style={{ display: "flex", gap: "8px" }}>
             <input
               type="text"
               className="form-control"
               style={{ flex: 1 }}
-              placeholder="Search articles by query..."
+              placeholder="Search articles by query or keyword..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
             <Button type="submit" className="btn-secondary">
               Search
             </Button>
+            {isSearching && (
+              <Button type="button" onClick={handleResetSearch} className="btn-secondary">
+                Clear
+              </Button>
+            )}
           </form>
+
+          {/* Filter Tabs */}
+          {!isSearching && (
+            <div className="tab-bar">
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === "ALL" ? "active" : ""}`}
+                onClick={() => setActiveTab("ALL")}
+              >
+                All Articles
+                <span className="tab-badge">{drafts.length + publishedArticles.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === "DRAFT" ? "active" : ""}`}
+                onClick={() => setActiveTab("DRAFT")}
+              >
+                Drafts
+                <span className="tab-badge tab-badge-draft">{drafts.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === "PUBLISHED" ? "active" : ""}`}
+                onClick={() => setActiveTab("PUBLISHED")}
+              >
+                Published
+                <span className="tab-badge">{publishedArticles.length}</span>
+              </button>
+            </div>
+          )}
+
+          {isSearching && (
+            <div style={{ fontSize: "13px", color: "#6b7280" }}>
+              Showing search results for &ldquo;{searchQuery}&rdquo; ({searchResults.length} found)
+            </div>
+          )}
 
           {loading ? (
             <p style={{ color: "#6b7280" }}>Loading articles...</p>
-          ) : articles.length === 0 ? (
-            <p style={{ color: "#6b7280" }}>No articles found.</p>
+          ) : displayedArticles.length === 0 ? (
+            <div style={{ padding: "24px 0", textAlign: "center", color: "#6b7280" }}>
+              <p style={{ margin: "0 0 8px 0", fontSize: "15px" }}>
+                {isSearching
+                  ? "No matching articles found."
+                  : activeTab === "DRAFT"
+                  ? "No draft articles saved."
+                  : activeTab === "PUBLISHED"
+                  ? "No published articles found."
+                  : "No articles available yet."}
+              </p>
+              <small>Use the form on the left to create and draft articles.</small>
+            </div>
           ) : (
-            <div className="article-list" style={{ maxHeight: "460px", overflowY: "auto" }}>
-              {articles.map((art) => (
-                <div key={art._id} className="article-item">
-                  <div className="article-header">
-                    <h4 className="article-title">{art.title}</h4>
-                    <span
-                      className={`ticket-status-badge badge-${(art.status || "published").toLowerCase()}`}
-                    >
-                      {art.status || "PUBLISHED"}
-                    </span>
-                  </div>
-                  <p className="article-content">
-                    {art.content?.length > 160 ? `${art.content.substring(0, 160)}...` : art.content}
-                  </p>
-                  {art.status === "DRAFT" && (
-                    <div style={{ marginTop: "6px" }}>
-                      <Button
-                        type="button"
-                        className="btn-secondary"
-                        style={{ fontSize: "12px", padding: "4px 10px" }}
-                        disabled={publishingId === art._id}
-                        onClick={() => handlePublishDraft(art._id)}
+            <div className="article-list" style={{ maxHeight: "480px", overflowY: "auto" }}>
+              {displayedArticles.map((art) => {
+                const isDraft = art.status === "DRAFT";
+                return (
+                  <div key={art._id} className="article-item">
+                    <div className="article-header">
+                      <h4 className="article-title">{art.title}</h4>
+                      <span
+                        className={`ticket-status-badge badge-${(art.status || "published").toLowerCase()}`}
                       >
-                        {publishingId === art._id ? "Publishing..." : "Publish Draft"}
-                      </Button>
+                        {art.status || "PUBLISHED"}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
+                    <p className="article-content">
+                      {art.content?.length > 160 ? `${art.content.substring(0, 160)}...` : art.content}
+                    </p>
+                    {isDraft && (
+                      <div style={{ display: "flex", gap: "8px", marginTop: "6px" }}>
+                        <Button
+                          type="button"
+                          className="btn-primary"
+                          style={{ fontSize: "12px", padding: "4px 12px" }}
+                          disabled={publishingId === art._id}
+                          onClick={() => handlePublishDraft(art._id)}
+                        >
+                          {publishingId === art._id ? "Publishing..." : "Publish Draft"}
+                        </Button>
+                        <Button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: "12px", padding: "4px 10px" }}
+                          onClick={() => handleDiscardDraft(art._id)}
+                        >
+                          Discard
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </Card>
