@@ -46,17 +46,57 @@ function KnowledgeManager() {
     setLoading(true);
     setError("");
     try {
-      // Calls GET /api/help (Returns published articles)
-      const res = await api.get("/help");
-      const list = Array.isArray(res?.data) ? res.data : [];
-      setPublishedArticles(list);
-    } catch (err) {
-      // 404 means no published articles found, which is a normal empty state
-      if (err?.message?.includes("No published") || err?.status === 404) {
-        setPublishedArticles([]);
-      } else {
-        setError(err?.message || "Failed to load help articles.");
+      let fetchedPub = [];
+      let fetchedDrafts = [];
+
+      // 1. Try to fetch all articles (including drafts) from backend
+      try {
+        const allRes = await api.get("/help?status=ALL");
+        if (Array.isArray(allRes?.data)) {
+          fetchedPub = allRes.data.filter((a) => a.status === "PUBLISHED");
+          fetchedDrafts = allRes.data.filter((a) => a.status === "DRAFT");
+        }
+      } catch {
+        // Fallback: fetch published
+        try {
+          const res = await api.get("/help");
+          if (Array.isArray(res?.data)) {
+            fetchedPub = res.data;
+          }
+        } catch (err) {
+          if (!err?.message?.includes("No published") && err?.status !== 404) {
+            setError(err?.message || "Failed to load help articles.");
+          }
+        }
+
+        // Try fetch /help/drafts endpoint
+        try {
+          const draftRes = await api.get("/help/drafts");
+          if (Array.isArray(draftRes?.data)) {
+            fetchedDrafts = draftRes.data;
+          }
+        } catch {
+          // ignore
+        }
       }
+
+      setPublishedArticles(fetchedPub);
+
+      // Merge backend drafts with local storage drafts (deduped by _id)
+      setDrafts((prev) => {
+        const draftMap = new Map();
+        fetchedDrafts.forEach((d) => draftMap.set(d._id, d));
+        prev.forEach((d) => {
+          if (!draftMap.has(d._id)) {
+            draftMap.set(d._id, d);
+          }
+        });
+        const combined = Array.from(draftMap.values());
+        saveDrafts(combined);
+        return combined;
+      });
+    } catch (err) {
+      setError(err?.message || "Failed to load help articles.");
     } finally {
       setLoading(false);
     }
@@ -87,7 +127,6 @@ function KnowledgeManager() {
         const res = await api.post("/help/search", { query: searchQuery.trim() });
         pubResults = Array.isArray(res?.data) ? res.data : [];
       } catch {
-        // Fallback to client-side filtering if search service is offline
         pubResults = publishedArticles.filter(
           (art) =>
             art.title?.toLowerCase().includes(query) ||
@@ -95,7 +134,7 @@ function KnowledgeManager() {
         );
       }
 
-      // 2. Client-side filter for local drafts
+      // 2. Client-side filter for drafts
       const draftResults = drafts.filter(
         (art) =>
           art.title?.toLowerCase().includes(query) ||
@@ -145,12 +184,15 @@ function KnowledgeManager() {
           createdAt: new Date().toISOString(),
         };
 
-        const updatedDrafts = [
-          createdDraft,
-          ...drafts.filter((d) => d._id !== createdDraft._id),
-        ];
-        saveDrafts(updatedDrafts);
+        setDrafts((prev) => {
+          const next = [createdDraft, ...prev.filter((d) => d._id !== createdDraft._id)];
+          saveDrafts(next);
+          return next;
+        });
+
         setSuccessMessage(`Draft "${createdDraft.title}" created successfully and saved!`);
+        setActiveTab("ALL");
+        fetchArticles();
       }
 
       setTitle("");
@@ -171,8 +213,11 @@ function KnowledgeManager() {
       await api.post(`/help/drafts/${articleId}/publish`);
 
       // Remove from drafts and refresh published list
-      const updatedDrafts = drafts.filter((d) => d._id !== articleId);
-      saveDrafts(updatedDrafts);
+      setDrafts((prev) => {
+        const next = prev.filter((d) => d._id !== articleId);
+        saveDrafts(next);
+        return next;
+      });
 
       setSuccessMessage("Draft article successfully published and indexed!");
       await fetchArticles();
@@ -184,8 +229,11 @@ function KnowledgeManager() {
   }
 
   function handleDiscardDraft(articleId) {
-    const updatedDrafts = drafts.filter((d) => d._id !== articleId);
-    saveDrafts(updatedDrafts);
+    setDrafts((prev) => {
+      const next = prev.filter((d) => d._id !== articleId);
+      saveDrafts(next);
+      return next;
+    });
     setSuccessMessage("Draft discarded.");
   }
 
